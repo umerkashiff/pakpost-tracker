@@ -447,9 +447,9 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
     if (!settings) return;
     const rect = canvas.getBoundingClientRect();
     const rawDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
-    dpr = Math.min(Number.isFinite(rawDpr) ? rawDpr : 1, maxDpr);
-    cssW = Math.max(1, Math.min(4000, Number.isFinite(rect.width) && rect.width > 0 ? rect.width : 800));
-    cssH = Math.max(1, Math.min(4000, Number.isFinite(rect.height) && rect.height > 0 ? rect.height : 600));
+    dpr = Math.min(Number.isFinite(rawDpr) ? rawDpr : 1, 1.5);
+    cssW = Math.max(1, Math.round(rect.width || (typeof window !== 'undefined' ? window.innerWidth : 1200)));
+    cssH = Math.max(1, Math.round(rect.height || (typeof window !== 'undefined' ? window.innerHeight : 800)));
     const w = Math.max(1, Math.round(cssW * dpr));
     const h = Math.max(1, Math.round(cssH * dpr));
     if (canvas.width !== w || canvas.height !== h) {
@@ -464,8 +464,8 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
     cellW = Math.max(4, Math.round(safeCellSize * 0.6 * dpr));
     const rawCols = Math.ceil(w / cellW);
     const rawRows = Math.ceil(h / cellH);
-    const nextCols = Math.min(350, Math.max(1, Number.isFinite(rawCols) ? rawCols : 50));
-    const nextRows = Math.min(250, Math.max(1, Number.isFinite(rawRows) ? rawRows : 50));
+    const nextCols = Math.min(250, Math.max(1, Number.isFinite(rawCols) ? rawCols : 50));
+    const nextRows = Math.min(180, Math.max(1, Number.isFinite(rawRows) ? rawRows : 50));
     offsetX = Math.floor((w - nextCols * cellW) / 2);
     offsetY = Math.floor((h - nextRows * cellH) / 2);
     if (nextCols !== cols || nextRows !== rows || energy.length !== nextCols * nextRows) {

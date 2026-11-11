@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check, RotateCcw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check } from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
 
@@ -32,9 +32,6 @@ export default function Home() {
   const [testLoading, setTestLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [copiedVercel, setCopiedVercel] = useState(false);
-
-  // Canvas remount key for the refresh button
-  const [canvasKey, setCanvasKey] = useState(0);
 
   // Load initial data
   useEffect(() => {
@@ -71,7 +68,7 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  // Smooth, instant scroll detection for daily tracking
+  // Smooth, instant scroll detection between search and daily tracking
   useEffect(() => {
     let lastSwitchTime = 0;
     const COOLDOWN_MS = 500;
@@ -82,7 +79,6 @@ export default function Home() {
       const now = Date.now();
       if (now - lastSwitchTime < COOLDOWN_MS) return;
 
-      // Ultra-sensitive threshold: even 4px of wheel movement triggers the switch
       if (e.deltaY > 4 && view === 'search') {
         lastSwitchTime = now;
         setView('daily');
@@ -252,10 +248,21 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen w-screen overflow-hidden bg-black text-white font-sans select-none flex flex-col items-center justify-center p-4 relative">
-      {/* Top Header Controls */}
-      <header className="absolute top-5 inset-x-5 flex items-center justify-between z-40 max-w-5xl mx-auto">
-        <div className="text-xs font-mono uppercase tracking-widest text-neutral-400">
+    <main className="relative w-screen h-screen overflow-hidden bg-black text-white font-sans select-none flex items-center justify-center">
+      {/* 1. Full-Screen Lagoon GradientASCII Background */}
+      <div className="fixed inset-0 w-full h-full z-0 overflow-hidden pointer-events-auto bg-black">
+        <GradientASCII
+          colors={['#0d9488', '#5eead4', '#f0fdfa']}
+          shape="pinch"
+          characters=" .:-=+*#%@"
+          cellSize={16}
+          density={0.8}
+        />
+      </div>
+
+      {/* 2. Top Header Controls */}
+      <header className="fixed top-5 inset-x-5 flex items-center justify-between z-40 max-w-5xl mx-auto pointer-events-none">
+        <div className="text-xs font-mono uppercase tracking-widest text-neutral-400 pointer-events-auto">
           Pakistan Post Tracker
         </div>
 
@@ -264,45 +271,24 @@ export default function Home() {
             setSettingsFeedback(null);
             setShowSettings(true);
           }}
-          className="px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-neutral-300 hover:text-white transition flex items-center gap-1.5 shadow-lg"
+          className="pointer-events-auto px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-neutral-300 hover:text-white transition flex items-center gap-1.5 shadow-lg"
         >
           <Settings className="w-3.5 h-3.5" />
           Settings
         </button>
       </header>
 
-      {/* Center Stage: Framed Lagoon GradientASCII Card */}
-      <div className="relative w-full max-w-[880px] h-[460px] md:h-[500px] rounded-2xl md:rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-black flex items-center justify-center">
-        {/* The Lagoon ASCII Canvas */}
-        <div key={canvasKey} className="absolute inset-0 w-full h-full pointer-events-auto">
-          <GradientASCII
-            colors={['#0d9488', '#5eead4', '#f0fdfa']}
-            shape="pinch"
-            characters=" .:-=+*#%@"
-            cellSize={16}
-            density={0.8}
-          />
-        </div>
-
-        {/* Reload canvas icon in top-right of card (like screenshot) */}
-        <button
-          type="button"
-          onClick={() => setCanvasKey((prev) => prev + 1)}
-          className="absolute top-3.5 right-3.5 z-20 p-2 rounded-lg bg-black/40 hover:bg-black/70 backdrop-blur-md border border-white/10 text-neutral-400 hover:text-white transition"
-          title="Restart animation"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-
-        {/* VIEW A: Centered Search Bar */}
+      {/* 3. The ONLY Card in the Center: Tracking Card */}
+      <div className="relative z-10 w-full max-w-lg p-4 flex items-center justify-center pointer-events-none">
+        {/* VIEW A: Search Card (Centered) */}
         <div
-          className={`absolute w-[90%] max-w-md transition-all duration-500 ease-out transform ${
+          className={`w-full max-w-md transition-all duration-500 ease-out transform ${
             view === 'search'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
-              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto block'
+              : 'opacity-0 blur-md scale-95 pointer-events-none hidden'
           }`}
         >
-          <div className="backdrop-blur-xl bg-black/65 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4">
+          <div className="backdrop-blur-2xl bg-black/75 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4">
             <div className="space-y-1">
               <label
                 htmlFor="mainTrackingInput"
@@ -353,15 +339,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW B: Translucent Glass Result Box */}
+        {/* VIEW B: Translucent Glass Result Card */}
         <div
-          className={`absolute w-[92%] max-w-lg transition-all duration-500 ease-out transform ${
+          className={`w-full max-w-lg transition-all duration-500 ease-out transform ${
             view === 'result'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
-              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto block'
+              : 'opacity-0 blur-md scale-95 pointer-events-none hidden'
           }`}
         >
-          <div className="backdrop-blur-2xl bg-black/80 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[440px] overflow-y-auto">
+          <div className="backdrop-blur-2xl bg-black/85 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
             {/* Header / Dismiss */}
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-baseline gap-2">
@@ -440,7 +426,7 @@ export default function Home() {
                         ep.gov.pk <ArrowUpRight className="w-3 h-3" />
                       </a>
                     </div>
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {[...result.events].reverse().map((ev, i) => (
                         <div
                           key={i}
@@ -477,15 +463,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW C: Translucent Glass Daily Tracking Box */}
+        {/* VIEW C: Translucent Glass Daily Tracking Card */}
         <div
-          className={`absolute w-[90%] max-w-md transition-all duration-500 ease-out transform ${
+          className={`w-full max-w-md transition-all duration-500 ease-out transform ${
             view === 'daily'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
-              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto block'
+              : 'opacity-0 blur-md scale-95 pointer-events-none hidden'
           }`}
         >
-          <div className="backdrop-blur-2xl bg-black/80 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[440px] overflow-y-auto">
+          <div className="backdrop-blur-2xl bg-black/85 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h2 className="text-xs font-mono uppercase tracking-wider font-bold text-white">
                 Daily Tracking ({trackedParcels.length})
@@ -550,8 +536,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Gentle Scroll Indicator Below Card */}
-      <div className="mt-5 z-30">
+      {/* 4. Bottom Gentle Scroll Indicator */}
+      <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-30 pointer-events-auto">
         {view === 'search' && (
           <button
             onClick={() => setView('daily')}
@@ -582,10 +568,10 @@ export default function Home() {
         )}
       </div>
 
-      {/* Settings Modal */}
+      {/* 5. Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="backdrop-blur-2xl bg-black/85 border border-white/20 w-full max-w-md p-6 space-y-5 rounded-2xl shadow-2xl text-white">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="backdrop-blur-2xl bg-black/90 border border-white/20 w-full max-w-md p-6 space-y-5 rounded-2xl shadow-2xl text-white">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
                 Settings

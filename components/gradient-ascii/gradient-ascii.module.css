@@ -121,20 +121,16 @@
   width: 100%;
   height: 100%;
   border: none;
-  background: var(--stage);
+  background: #000;
 }
 .stage {
   position: absolute;
   inset: 0;
   cursor: crosshair;
+  background: #000;
 }
-/* Without WebGL: a still gradient from the colours and the shape (--fallback, set by the
-   component), or Atmosphere's if that is missing. */
 .stage[data-failed='true'] {
-  background: var(
-    --fallback,
-    radial-gradient(120% 75% at 50% 0%, #a5d8ff 0%, #38bdf8 30%, #1e3fd8 55%, transparent 75%)
-  );
+  background: #000;
 }
 .canvas {
   position: absolute;
