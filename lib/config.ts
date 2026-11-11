@@ -2,11 +2,21 @@ import fs from 'fs';
 import path from 'path';
 import { ParcelConfig, TrackingResult } from './types';
 import { getRedis } from './redis';
-import { encrypt, decrypt, generateAlias, maskTrackingId } from './crypto';
+import {
+  encrypt,
+  decrypt,
+  generateAlias,
+  maskTrackingId,
+  hashPasscode,
+  verifyPasscodeHash,
+  safeCompare
+} from './crypto';
 
 const REDIS_PARCELS_KEY = 'pakpost:enc:parcels';
 const REDIS_WEBHOOK_KEY = 'pakpost:enc:webhook';
 const REDIS_SCHEDULE_KEY = 'pakpost:enc:schedule';
+const REDIS_PASSCODE_KEY = 'pakpost:enc:passcode';
+const REDIS_QSTASH_ID_KEY = 'pakpost:enc:qstash_schedule_id';
 
 export interface PublicParcel {
   id: string; // Masked ID: e.g. "LT••••••NL"
@@ -243,6 +253,88 @@ export async function saveLastParcelSignature(parcelId: string, signature: strin
     });
   } catch (err) {
     console.error('Error saving parcel signature to Redis:', err);
+  }
+}
+
+/**
+ * Verify owner passcode against Redis salted scrypt hash first, then SETTINGS_PASSCODE env var.
+ * Never falls back to a public hardcoded passcode.
+ */
+export async function verifyOwnerPasscode(
+  candidate: string
+): Promise<{ valid: boolean; configured: boolean }> {
+  const cleanCandidate = (candidate || '').trim();
+
+  const redis = getRedis();
+  if (redis) {
+    try {
+      const stored = await redis.get<string>(REDIS_PASSCODE_KEY);
+      if (stored && typeof stored === 'string') {
+        const decryptedHash = decrypt(stored);
+        if (decryptedHash.includes(':')) {
+          return {
+            valid: cleanCandidate.length > 0 && verifyPasscodeHash(cleanCandidate, decryptedHash),
+            configured: true
+          };
+        }
+      }
+    } catch (err) {
+      console.error('Error reading passcode from Redis:', err);
+    }
+  }
+
+  const envPasscode = process.env.SETTINGS_PASSCODE?.trim();
+  if (!envPasscode) {
+    return { valid: false, configured: false };
+  }
+
+  return {
+    valid: cleanCandidate.length > 0 && safeCompare(cleanCandidate, envPasscode),
+    configured: true
+  };
+}
+
+/**
+ * Persist a salted scrypt hash of a new owner passcode into encrypted Redis storage.
+ */
+export async function saveOwnerPasscode(newPasscode: string): Promise<boolean> {
+  const clean = newPasscode.trim();
+  if (clean.length < 4) {
+    throw new Error('Passcode must be at least 4 characters.');
+  }
+
+  const redis = getRedis();
+  if (!redis) {
+    throw new Error('Redis is required to update the passcode from the UI.');
+  }
+
+  const cipher = encrypt(hashPasscode(clean));
+  await redis.set(REDIS_PASSCODE_KEY, cipher);
+  return true;
+}
+
+export async function getQStashScheduleId(): Promise<string | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    const stored = await redis.get<string>(REDIS_QSTASH_ID_KEY);
+    if (stored && typeof stored === 'string') {
+      const decrypted = decrypt(stored).trim();
+      return decrypted || null;
+    }
+  } catch (err) {
+    console.error('Error reading QStash schedule ID:', err);
+  }
+  return null;
+}
+
+export async function saveQStashScheduleId(scheduleId: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    await redis.set(REDIS_QSTASH_ID_KEY, encrypt(scheduleId.trim()));
+  } catch (err) {
+    console.error('Error saving QStash schedule ID:', err);
   }
 }
 

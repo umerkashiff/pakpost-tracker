@@ -7,16 +7,18 @@ import {
 } from '@/lib/config';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
 import { sendDiscordNotification } from '@/lib/discord';
+import { safeCompare } from '@/lib/crypto';
 import { TrackingResult } from '@/lib/types';
 
 async function handleCheck(request: NextRequest) {
   // 1. Verify Authorization if CRON_SECRET is configured
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = process.env.CRON_SECRET?.trim();
   if (cronSecret) {
-    const authHeader = request.headers.get('authorization');
-    const querySecret = request.nextUrl.searchParams.get('secret');
+    const authHeader = (request.headers.get('authorization') || '').trim();
+    const querySecret = (request.nextUrl.searchParams.get('secret') || '').trim();
     const isAuthorized =
-      authHeader === `Bearer ${cronSecret}` || querySecret === cronSecret;
+      (authHeader.startsWith('Bearer ') && safeCompare(authHeader.slice(7).trim(), cronSecret)) ||
+      (querySecret.length > 0 && safeCompare(querySecret, cronSecret));
 
     if (!isAuthorized) {
       return NextResponse.json(

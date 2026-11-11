@@ -32,10 +32,12 @@ export default function Home() {
     return `${id.slice(0, 2)}••••••${id.slice(-2)}`;
   };
 
-  // Settings state (only Schedule & Webhook, locked by passcode)
+  // Settings state (Schedule, Webhook, & Passcode)
   const [passcode, setPasscode] = useState('');
+  const [newPasscode, setNewPasscode] = useState('');
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [schedule, setSchedule] = useState('0 4 * * *');
+  const [qstashConfigured, setQstashConfigured] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -105,6 +107,10 @@ export default function Home() {
         setSettingsFeedback('Passcode verified.');
       } else {
         setIsUnlocked(false);
+        if (res.status === 503) {
+          const errData = await res.json().catch(() => ({}));
+          setSettingsFeedback(errData.error || 'SETTINGS_PASSCODE not configured on server.');
+        }
       }
     } catch {
       setIsUnlocked(false);
@@ -126,8 +132,10 @@ export default function Home() {
       .then((r) => r.json())
       .then((data) => {
         setIsServerDiscordSet(Boolean(data.hasDiscord));
-        if (data.schedule && !savedSchedule) {
+        setQstashConfigured(Boolean(data.qstashConfigured));
+        if (data.schedule) {
           setSchedule(data.schedule);
+          localStorage.setItem('pakpost_schedule', data.schedule);
         }
 
         // Local list is the source of truth once it exists, so deletions persist across reloads.
@@ -375,21 +383,27 @@ export default function Home() {
       }
       localStorage.setItem('pakpost_schedule', cleanSchedule);
 
+      const cleanNewPasscode = newPasscode.trim();
       const res = await fetch('/api/parcels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'settings',
           passcode,
+          newPasscode: cleanNewPasscode || undefined,
           webhookUrl: cleanWebhook,
           schedule: cleanSchedule
         })
       });
 
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setSettingsFeedback('Settings saved.');
+        if (data.passcodeUpdated && cleanNewPasscode) {
+          setPasscode(cleanNewPasscode);
+          setNewPasscode('');
+        }
+        setSettingsFeedback(data.message || 'Settings saved.');
       } else {
-        const data = await res.json();
         setSettingsFeedback(data.error || 'Failed to save settings.');
       }
     } catch {
@@ -758,32 +772,37 @@ export default function Home() {
               />
             </div>
 
-            {/* Only Setting 1: Change Schedule */}
+            {/* Change Schedule */}
             <div className="space-y-1.5">
-              <label
-                htmlFor="schedule"
-                className="block text-xs font-mono uppercase tracking-wider text-white/80"
-              >
-                Change Schedule (Cron)
-              </label>
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor="schedule"
+                  className="block text-xs font-mono uppercase tracking-wider text-white/80"
+                >
+                  Schedule (Cron)
+                </label>
+                <span className="text-[10px] font-mono text-white/50 uppercase">
+                  {qstashConfigured ? 'QStash Live' : 'Static vercel.json'}
+                </span>
+              </div>
               <input
                 id="schedule"
                 type="text"
                 disabled={!isUnlocked}
                 value={schedule}
                 onChange={(e) => setSchedule(e.target.value)}
-                placeholder="0 4 * * *"
+                placeholder="0 4 * * * or CRON_TZ=Asia/Karachi 0 9 * * *"
                 className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
               />
             </div>
 
-            {/* Only Setting 2: Change Webhook */}
+            {/* Change Webhook (Discord, Slack, or JSON) */}
             <div className="space-y-1.5">
               <label
                 htmlFor="webhook"
                 className="block text-xs font-mono uppercase tracking-wider text-white/80"
               >
-                Change Webhook
+                Webhook URL
               </label>
               <input
                 id="webhook"
@@ -791,7 +810,26 @@ export default function Home() {
                 disabled={!isUnlocked}
                 value={webhookUrl}
                 onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder="https://discord.com/api/webhooks/..."
+                placeholder="Discord, Slack, or JSON webhook URL..."
+                className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              />
+            </div>
+
+            {/* Change Owner Passcode */}
+            <div className="space-y-1.5">
+              <label
+                htmlFor="newPasscode"
+                className="block text-xs font-mono uppercase tracking-wider text-white/80"
+              >
+                New Passcode (Optional)
+              </label>
+              <input
+                id="newPasscode"
+                type="password"
+                disabled={!isUnlocked}
+                value={newPasscode}
+                onChange={(e) => setNewPasscode(e.target.value)}
+                placeholder="Leave blank to keep current..."
                 className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
               />
             </div>

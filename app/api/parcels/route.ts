@@ -9,14 +9,23 @@ import {
   saveDiscordWebhookUrl,
   getScheduleCron,
   saveScheduleCron,
-  getParcelByAliasOrId
+  verifyOwnerPasscode,
+  saveOwnerPasscode,
+  getQStashScheduleId,
+  saveQStashScheduleId
 } from '@/lib/config';
 import { generateAlias } from '@/lib/crypto';
+import {
+  isQStashConfigured,
+  resolveCronDestinationUrl,
+  syncQStashSchedule
+} from '@/lib/qstash';
 
 export async function GET(request: NextRequest) {
-  const authPasscode = request.nextUrl.searchParams.get('passcode');
-  const serverPasscode = process.env.SETTINGS_PASSCODE || 'uwu123';
-  const isOwner = authPasscode === serverPasscode;
+  const authPasscode = request.nextUrl.searchParams.get('passcode') || '';
+  const { valid: isOwner } = authPasscode
+    ? await verifyOwnerPasscode(authPasscode)
+    : { valid: false };
 
   // For public visitors: return strictly masked IDs and aliases
   // Only with valid passcode are raw IDs ever accessible
@@ -29,18 +38,24 @@ export async function GET(request: NextRequest) {
     parcels,
     hasDiscord,
     discordWebhookConfigured: hasDiscord,
-    schedule
+    schedule,
+    qstashConfigured: isQStashConfigured()
   });
 }
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, id, alias, label, passcode, webhookUrl, schedule } = body;
-    const serverPasscode = process.env.SETTINGS_PASSCODE || 'uwu123';
+    const { action, id, alias, label, passcode, newPasscode, webhookUrl, schedule } = body;
 
-    // Security check: only valid passcode can modify tracked items or settings
-    if (passcode !== serverPasscode) {
+    const { valid, configured } = await verifyOwnerPasscode(passcode || '');
+    if (!configured) {
+      return NextResponse.json(
+        { error: 'Server passcode not set. Configure SETTINGS_PASSCODE in environment variables.' },
+        { status: 503 }
+      );
+    }
+    if (!valid) {
       return NextResponse.json(
         { error: 'Unauthorized: Valid passcode required to modify tracked parcels or settings.' },
         { status: 403 }
@@ -48,8 +63,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'settings') {
+      let scheduleMessage: string | null = null;
+      let qstashSynced = false;
+      let scheduleMode: 'qstash' | 'static' = 'static';
+      let passcodeUpdated = false;
+
       if (schedule) {
-        await saveScheduleCron(schedule.trim());
+        const cleanSchedule = String(schedule).trim();
+        await saveScheduleCron(cleanSchedule);
 
         try {
           const vercelPath = path.join(process.cwd(), 'vercel.json');
@@ -57,7 +78,7 @@ export async function POST(request: NextRequest) {
             crons: [
               {
                 path: '/api/cron',
-                schedule: schedule.trim()
+                schedule: cleanSchedule
               }
             ]
           };
@@ -65,19 +86,31 @@ export async function POST(request: NextRequest) {
         } catch {
           // Read-only in serverless production
         }
+
+        const prevId = await getQStashScheduleId();
+        const destUrl = resolveCronDestinationUrl(request.nextUrl.origin);
+        const syncResult = await syncQStashSchedule(cleanSchedule, destUrl, prevId);
+        qstashSynced = syncResult.synced;
+        scheduleMode = syncResult.mode;
+        scheduleMessage = syncResult.message;
+
+        if (syncResult.synced && syncResult.scheduleId) {
+          await saveQStashScheduleId(syncResult.scheduleId);
+        }
       }
 
       if (webhookUrl !== undefined) {
-        await saveDiscordWebhookUrl(webhookUrl.trim());
-        process.env.DISCORD_WEBHOOK_URL = webhookUrl.trim();
+        const cleanWebhook = String(webhookUrl).trim();
+        await saveDiscordWebhookUrl(cleanWebhook);
+        process.env.DISCORD_WEBHOOK_URL = cleanWebhook;
 
         try {
           const envPath = path.join(process.cwd(), '.env.local');
           let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
           if (content.includes('DISCORD_WEBHOOK_URL=')) {
-            content = content.replace(/DISCORD_WEBHOOK_URL=.*/g, `DISCORD_WEBHOOK_URL=${webhookUrl.trim()}`);
+            content = content.replace(/DISCORD_WEBHOOK_URL=.*/g, `DISCORD_WEBHOOK_URL=${cleanWebhook}`);
           } else {
-            content += `\nDISCORD_WEBHOOK_URL=${webhookUrl.trim()}\n`;
+            content += `\nDISCORD_WEBHOOK_URL=${cleanWebhook}\n`;
           }
           fs.writeFileSync(envPath, content, 'utf8');
         } catch {
@@ -85,7 +118,18 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: true });
+      if (typeof newPasscode === 'string' && newPasscode.trim().length > 0) {
+        await saveOwnerPasscode(newPasscode);
+        passcodeUpdated = true;
+      }
+
+      return NextResponse.json({
+        success: true,
+        qstashSynced,
+        scheduleMode,
+        passcodeUpdated,
+        message: scheduleMessage || 'Settings saved.'
+      });
     }
 
     const parcels = await getTrackedParcels();
@@ -117,7 +161,7 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Failed to update parcels' },
-      { status: 500 }
+      { status: 400 }
     );
   }
 }

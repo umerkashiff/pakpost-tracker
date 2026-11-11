@@ -1,30 +1,27 @@
 # Pakistan Post Tracker
 
-Tracks domestic and incoming international parcels across origin carriers and Pakistan Post EMTTS then pings Discord at 9:00 AM PKT only when a shipment moves.
+Self-hostable Next.js tracker and REST API for Pakistan Post EMTTS plus incoming international carriers (`PostNL` `Cainiao` `UPU` `ParcelsApp`). Built to send change-only alerts to Discord Slack or any custom webhook without leaking saved tracking numbers.
 
-Live: [pakpost-track.vercel.app](https://pakpost-track.vercel.app)
+Live instance: [pakpost-track.vercel.app](https://pakpost-track.vercel.app)
 
 ---
 
-## Why I built this
+## Problems this solves
 
-Checking incoming mail on `ep.gov.pk` gets annoying fast:
-
-1. EMTTS stays blank or shows little before a parcel lands in Pakistan.
-2. Public multi-tracker sites jump between scrapers on every refresh leaving duplicate lines or broken `N/A` timestamps.
-3. Basic cron bots spam the exact same status in Discord every morning.
-
-So I put together one Next.js app that routes each parcel to the right carrier picks clean PKT timestamps saves tracking IDs encrypted behind a passcode and only sends a Discord ping when the state hash changes.
+1. `ep.gov.pk` shows little or nothing before an international parcel reaches Pakistan.
+2. Tracking sites switch scrapers across refreshes leaving duplicate checkpoints or broken `N/A` timestamps.
+3. Naive cron jobs ping Discord every single run even when nothing moved.
+4. Hosting a personal list publicly usually exposes raw tracking numbers unless they are encrypted and masked server-side.
 
 ---
 
 ## Demo
 
-Sample tracking lookup (`CP123456789PK`) and timeline scrolling:
+Sample lookup (`CP123456789PK`) and timeline scrolling:
 
 ![Tracking lookup demo](docs/track-demo.gif)
 
-Masked daily list (`LT••••••NL`) passcode guard and locked settings:
+Masked daily list (`LT••••••NL`) passcode modal and settings:
 
 ![Daily tracking and settings demo](docs/settings-demo.gif)
 
@@ -32,7 +29,7 @@ Masked daily list (`LT••••••NL`) passcode guard and locked settings:
 
 ## Carrier routing and deduplication
 
-`lib/upstream.ts` picks the upstream source by tracking prefix or country suffix instead of racing every aggregator at once. `lib/pakpost.ts` merges those scans with Pakistan Post EMTTS drops undated `N/A` entries deduplicates same-day EDI records and caches the upstream result for 15 minutes.
+`lib/upstream.ts` picks the upstream carrier by tracking prefix or country suffix instead of racing every scraper on every request. `lib/pakpost.ts` merges those scans with Pakistan Post EMTTS strips undated `N/A` rows removes duplicate same-day EDI records and caches the upstream manifest for 15 minutes in Redis.
 
 ```mermaid
 flowchart TD
@@ -57,23 +54,26 @@ flowchart TD
     K --> L[Cache Upstream 15m in Redis and Return Timeline]
 ```
 
-Note on PostNL fallback: `postnl.post` throws HTTP `429` at `20 req/min` on shared Vercel IPs so `jouw.postnl.nl` acts as fallback while stripping everything except `observationDate` and `description` so recipient address fields never enter the app.
+`postnl.post` throws HTTP `429` at `20 req/min` on shared Vercel IPs so `jouw.postnl.nl` acts as fallback while discarding every field except `observationDate` and `description` so recipient address PII never leaves the origin fetch.
 
 ---
 
-## Daily Discord cron and diffing
+## Scheduling and change-only alerts
 
-`vercel.json` runs `/api/cron` daily at `04:00 UTC` (`09:00 AM PKT`). Cron bypasses the 15-minute cache fetches fresh carrier events builds a signature via `computeTrackingSignature` (`statusCategory:totalEvents:latestEvent`) and compares it to the previous hash in Redis.
+Every scheduled run hits `/api/cron` bypasses the 15-minute cache fetches fresh carrier events builds a signature (`statusCategory:totalEvents:latestEvent`) and only fires the configured webhook if that hash changed.
+
+- **With `QSTASH_TOKEN` set:** Editing the cron field in Settings syncs a live **Upstash QStash** schedule immediately with zero redeploy (`0 4 * * *` UTC or `CRON_TZ=Asia/Karachi 0 9 * * *`).
+- **Without `QSTASH_TOKEN`:** `vercel.json` runs statically as a daily fallback (`0 4 * * *`).
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Vercel Cron 0400 UTC
+    participant Scheduler as QStash or Vercel Cron
     participant API as Cron Route
     participant Tracker as Upstream and EMTTS
     participant Redis as Upstash Redis
-    participant Discord as Discord Webhook
+    participant Hook as Webhook Target
 
-    Cron->>API: Trigger daily check at 9 AM PKT
+    Scheduler->>API: Trigger scheduled check
     API->>Redis: Load AES-256 encrypted parcel list
     loop Each saved parcel
         API->>Tracker: Fetch fresh tracking with cache bypass
@@ -83,43 +83,63 @@ sequenceDiagram
             API-->>API: Skip alert
         else New checkpoint or status change
             API->>Redis: Save updated signature hash
-            API->>Discord: Post embed and top-level user ping
+            API->>Hook: Deliver Discord Slack or JSON payload
         end
     end
 ```
 
 ---
 
-## Endpoints and flags
+## Use it as an API or connect other services
+
+You do not need Discord to use this.
+
+### 1. Standalone tracking JSON endpoint
+Hit `GET /api/track?id=CP123456789PK` from scripts Telegram bots Home Assistant n8n or iOS Shortcuts to get normalized PKT events across origin carriers + EMTTS.
+
+### 2. Multi-service webhook auto-detection
+Paste any destination URL into **Webhook URL** inside Settings (or `DISCORD_WEBHOOK_URL` in env):
+- `discord.com/api/webhooks/...` sends rich Discord embeds plus optional `<@DISCORD_PING_USER_ID>` mention.
+- `hooks.slack.com/...` sends a formatted Slack message.
+- Any other `https://...` URL receives a raw JSON `POST`:
+
+```json
+{
+  "event": "parcel_update",
+  "source": "pakpost-tracker",
+  "checkedAt": "2026-11-11T18:00:00.000Z",
+  "updatedCount": 1,
+  "parcels": [ ... ]
+}
+```
+
+---
+
+## API endpoints
 
 | Endpoint | Params / Body | Behavior |
 |---|---|---|
-| `GET /api/track` | `?id=` or `?alias=` and optional `&label=` | Resolves parcel merges upstream + EMTTS and masks saved parcel IDs in output |
+| `GET /api/track` | `?id=` or `?alias=` plus optional `&label=` | Resolves parcel merges upstream + EMTTS and masks saved parcel IDs |
 | `POST /api/track` | `{ id, alias, label }` | JSON body equivalent of `GET /api/track` |
-| `GET /api/parcels` | optional `?passcode=` | Public visitors get masked IDs (`LT••••••NL`) + 16-char HMAC aliases; valid passcode returns full list |
-| `POST /api/parcels` | `{ passcode, action: add \| remove \| settings, ... }` | Mutates AES-256 encrypted Redis state (`403` on bad passcode) |
-| `GET \| POST /api/cron` | `?force=true` `&notify=false` `&secret=` | Checks all saved parcels live; `?force=true` pushes even without status change; accepts `Authorization: Bearer` header |
-| `POST /api/notify-test` | optional `{ webhookUrl }` | Fires a test Discord embed with user ping |
-| `POST /api/auth/verify` | `{ passcode }` | Verifies owner passcode against `SETTINGS_PASSCODE` |
+| `GET /api/parcels` | optional `?passcode=` | Public callers receive masked IDs (`LT••••••NL`) + 16-char HMAC aliases; valid passcode returns raw list |
+| `POST /api/parcels` | `{ passcode, action: add \| remove \| settings, ... }` | Mutates Redis state (`403` invalid passcode `503` if `SETTINGS_PASSCODE` unset) |
+| `GET \| POST /api/cron` | `?force=true` `&notify=false` `&secret=` | Runs live diff check across saved parcels; accepts `Authorization: Bearer <CRON_SECRET>` |
+| `POST /api/notify-test` | optional `{ webhookUrl }` | Sends a test payload matching Discord Slack or generic JSON |
+| `POST /api/auth/verify` | `{ passcode }` | Verifies owner passcode |
 
 ---
 
-## Storage and security notes
+## Self-hosting and environment variables
 
-- **Redis keys** (`lib/config.ts`): `pakpost:enc:parcels` `pakpost:enc:webhook` `pakpost:enc:schedule` (`AES-256-GCM` in `iv:authTag:ciphertext` format) plus `pakpost:enc:signatures` (diff hashes) and `pakpost:cache:v3:upstream:<id>` (`900s` TTL).
-- **Privacy masking**: Saved tracking IDs are replaced with `XX••••••YY` and mapped to HMAC-SHA256 aliases (`generateAlias`) so client requests never expose real numbers.
-- **Cron schedule caveat**: Changing cron inside Settings updates Redis metadata and local `vercel.json` when running locally. On Vercel production the actual run time stays tied to `vercel.json` until committed and redeployed.
-
----
-
-## Environment variables
+No default password ships in the codebase. Set `SETTINGS_PASSCODE` and Redis credentials before deploying your fork:
 
 | Variable | Purpose |
 |---|---|
-| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Redis persistence (`KV_REST_API_*` and `STORAGE_*` from Vercel Storage also supported) |
-| `DISCORD_WEBHOOK_URL` | Fallback webhook URL if not saved in Settings |
-| `DISCORD_PING_USER_ID` | Numeric Discord user ID pinged in `content` and `allowed_mentions` |
-| `SETTINGS_PASSCODE` | Owner passcode required to add delete or edit settings |
-| `ENCRYPTION_KEY` | Key seed for `AES-256-GCM` encryption in Redis |
-| `CRON_SECRET` | Protects `/api/cron` via `Bearer` token or `?secret=` and salts HMAC aliases |
-| `TRACKING_IDS` | Optional fallback seed (`ID:Label,ID2:Label2`) when Redis has no list saved |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Encrypted Redis store (`KV_REST_API_*` and `STORAGE_*` from Vercel Storage also supported) |
+| `SETTINGS_PASSCODE` | Initial owner passcode for Settings and daily list changes (can be changed later inside Settings via salted `scrypt` hash in Redis `pakpost:enc:passcode`) |
+| `ENCRYPTION_KEY` | Seed key for `AES-256-GCM` Redis entries (`pakpost:enc:*`); falls back to `CRON_SECRET` if omitted |
+| `CRON_SECRET` | Secures `/api/cron` via `Bearer` token or `?secret=` and salts HMAC aliases |
+| `QSTASH_TOKEN` | Enables live schedule editing straight from the Settings panel via Upstash QStash |
+| `DISCORD_WEBHOOK_URL` | Default Discord Slack or JSON webhook URL |
+| `DISCORD_PING_USER_ID` | Optional numeric Discord user ID pinged on Discord alerts |
+| `TRACKING_IDS` | Optional fallback seed (`ID:Label,ID2:Label2`) if Redis has no saved list |
