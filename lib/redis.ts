@@ -27,10 +27,20 @@ let redisInstance: Redis | null = null;
 export function getRedis(): Redis | null {
   if (redisInstance) return redisInstance;
 
-  const creds = getRedisCredentials();
-  if (!creds) return null;
-
   try {
+    // 1. Try standard Upstash / Vercel KV fromEnv()
+    if (
+      (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) ||
+      (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+    ) {
+      redisInstance = Redis.fromEnv();
+      return redisInstance;
+    }
+
+    // 2. Fallback to custom credential check
+    const creds = getRedisCredentials();
+    if (!creds) return null;
+
     redisInstance = new Redis({
       url: creds.url,
       token: creds.token
