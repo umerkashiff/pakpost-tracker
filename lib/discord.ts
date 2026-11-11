@@ -1,6 +1,41 @@
 import { TrackingResult, StatusCategory } from './types';
 import { getDiscordWebhookUrl } from './config';
 
+const TRACKER_BOT_NAME = 'Pakistan Post Tracker';
+export const TRACKER_AVATAR_URL =
+  'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png';
+const DEFAULT_DISCORD_PING_USER_ID = '894239779510681700';
+
+/**
+ * Resolve the Discord user snowflake to ping in webhook alerts.
+ * Allows overriding via DISCORD_PING_USER_ID env var without leaking to client code.
+ */
+export function getDiscordPingUserId(): string | null {
+  const raw = (process.env.DISCORD_PING_USER_ID ?? DEFAULT_DISCORD_PING_USER_ID).trim();
+  return /^\d{17,20}$/.test(raw) ? raw : null;
+}
+
+/**
+ * Build a Discord webhook payload with top-level user mention so Discord fires a server ping.
+ */
+export function buildDiscordWebhookPayload(
+  embeds: Record<string, unknown>[],
+  options?: { ping?: boolean }
+) {
+  const pingUserId = options?.ping !== false ? getDiscordPingUserId() : null;
+  return {
+    username: TRACKER_BOT_NAME,
+    avatar_url: TRACKER_AVATAR_URL,
+    ...(pingUserId
+      ? {
+          content: `<@${pingUserId}>`,
+          allowed_mentions: { users: [pingUserId] }
+        }
+      : {}),
+    embeds
+  };
+}
+
 const STATUS_CONFIG: Record<StatusCategory, { color: number; emoji: string; label: string }> = {
   DELIVERED: {
     color: 0x10b981, // Emerald Green
@@ -148,7 +183,7 @@ export async function sendDiscordNotification(
         text: result.isUpdated
           ? `✨ Checkpoint Advanced • Pakistan Post Tracker • ${config.label}`
           : `Pakistan Post EMTTS Daily Tracker • Status: ${config.label}`,
-        icon_url: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png'
+        icon_url: TRACKER_AVATAR_URL
       },
       timestamp: new Date().toISOString()
     };
@@ -165,11 +200,7 @@ export async function sendDiscordNotification(
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          username: 'Pakistan Post Tracker',
-          avatar_url: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png',
-          embeds: chunk
-        })
+        body: JSON.stringify(buildDiscordWebhookPayload(chunk, { ping: i === 0 }))
       });
 
       if (!response.ok) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDiscordWebhookUrl } from '@/lib/config';
+import { buildDiscordWebhookPayload, TRACKER_AVATAR_URL } from '@/lib/discord';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,39 +14,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const payload = {
-      username: 'Pakistan Post Tracker',
-      avatar_url: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png',
-      embeds: [
-        {
-          title: '🔔 Discord Webhook Test Successful!',
-          description: 'Your Pakistan Post Tracker webhook is properly configured and receiving messages.\n\nWhenever the automated daily schedule runs, tracking updates will be posted here.',
-          color: 0x10b981,
-          fields: [
-            {
-              name: '⏰ Schedule',
-              value: 'Daily automated check (09:00 AM PKT)',
-              inline: true
-            },
-            {
-              name: '🌐 Provider',
-              value: 'Pakistan Post EMTTS (ep.gov.pk)',
-              inline: true
-            },
-            {
-              name: '☁️ Hosted On',
-              value: 'Vercel Serverless',
-              inline: true
-            }
-          ],
-          footer: {
-            text: 'Pakistan Post Tracker • Test Notification',
-            icon_url: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png'
+    const payload = buildDiscordWebhookPayload([
+      {
+        title: '🔔 Discord Webhook Test Successful!',
+        description:
+          'Your Pakistan Post Tracker webhook is properly configured and receiving messages.\n\nWhenever the automated daily schedule runs, tracking updates will be posted here.',
+        color: 0x10b981,
+        fields: [
+          {
+            name: '⏰ Schedule',
+            value: 'Daily automated check (09:00 AM PKT)',
+            inline: true
           },
-          timestamp: new Date().toISOString()
-        }
-      ]
-    };
+          {
+            name: '🌐 Provider',
+            value: 'Pakistan Post EMTTS (ep.gov.pk)',
+            inline: true
+          },
+          {
+            name: '☁️ Hosted On',
+            value: 'Vercel Serverless',
+            inline: true
+          }
+        ],
+        footer: {
+          text: 'Pakistan Post Tracker • Test Notification',
+          icon_url: TRACKER_AVATAR_URL
+        },
+        timestamp: new Date().toISOString()
+      }
+    ]);
 
     const res = await fetch(webhookUrl, {
       method: 'POST',
