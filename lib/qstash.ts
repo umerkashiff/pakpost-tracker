@@ -1,5 +1,11 @@
-const QSTASH_BASE_URL = 'https://qstash.upstash.io/v2/schedules';
 const DEFAULT_SCHEDULE_ID = 'pakpost-tracker-cron';
+
+function getQStashSchedulesBaseUrl(): string {
+  const base = (process.env.QSTASH_URL || 'https://qstash.upstash.io')
+    .trim()
+    .replace(/\/+$/, '');
+  return `${base}/v2/schedules`;
+}
 
 export interface QStashSyncResult {
   synced: boolean;
@@ -86,8 +92,9 @@ export async function syncQStashSchedule(
     );
   }
 
+  const schedulesBaseUrl = getQStashSchedulesBaseUrl();
   const idToDelete = previousScheduleId || DEFAULT_SCHEDULE_ID;
-  await fetch(`${QSTASH_BASE_URL}/${encodeURIComponent(idToDelete)}`, {
+  await fetch(`${schedulesBaseUrl}/${encodeURIComponent(idToDelete)}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` }
   }).catch(() => null);
@@ -105,7 +112,7 @@ export async function syncQStashSchedule(
     headers['Upstash-Forward-Authorization'] = `Bearer ${cronSecret}`;
   }
 
-  const res = await fetch(`${QSTASH_BASE_URL}/${destinationUrl}`, {
+  const res = await fetch(`${schedulesBaseUrl}/${destinationUrl}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ trigger: 'qstash' })
@@ -126,3 +133,4 @@ export async function syncQStashSchedule(
     message: `Live QStash schedule synced (${cleanCron}).`
   };
 }
+
