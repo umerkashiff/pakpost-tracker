@@ -12,6 +12,58 @@ interface TrackedItem {
 }
 
 type ActiveView = 'search' | 'result' | 'daily' | 'settings';
+type SchedulePreset = 'daily' | '12h' | '6h' | '3h' | 'hourly' | 'custom';
+
+function parseCronToUi(rawCron: string): { preset: SchedulePreset; time: string } {
+  const clean = (rawCron || '').trim().replace(/\s+/g, ' ');
+  const parts = clean.split(' ');
+  const isKarachi = parts[0] === 'CRON_TZ=Asia/Karachi';
+  const fields = parts[0]?.startsWith('CRON_TZ=') ? parts.slice(1) : parts;
+
+  if (fields.length === 5 && fields[2] === '*' && fields[3] === '*' && fields[4] === '*') {
+    const [min, hour] = fields;
+    if (min === '0' && hour === '*') return { preset: 'hourly', time: '09:00' };
+    if (min === '0' && hour === '*/3') return { preset: '3h', time: '09:00' };
+    if (min === '0' && hour === '*/6') return { preset: '6h', time: '09:00' };
+    if (min === '0' && hour === '*/12') return { preset: '12h', time: '09:00' };
+
+    if (/^\d{1,2}$/.test(min) && /^\d{1,2}$/.test(hour)) {
+      const m = Number(min);
+      const h = Number(hour);
+      if (m >= 0 && m <= 59 && h >= 0 && h <= 23) {
+        const totalMins = isKarachi ? h * 60 + m : (h * 60 + m + 300) % 1440;
+        const pktH = String(Math.floor(totalMins / 60)).padStart(2, '0');
+        const pktM = String(totalMins % 60).padStart(2, '0');
+        return { preset: 'daily', time: `${pktH}:${pktM}` };
+      }
+    }
+  }
+
+  return { preset: 'custom', time: '09:00' };
+}
+
+function buildCronFromUi(
+  preset: SchedulePreset,
+  time: string,
+  customCron: string,
+  useKarachiTz: boolean
+): string {
+  if (preset === 'hourly') return '0 * * * *';
+  if (preset === '3h') return '0 */3 * * *';
+  if (preset === '6h') return '0 */6 * * *';
+  if (preset === '12h') return '0 */12 * * *';
+  if (preset === 'custom') return customCron.trim() || '0 4 * * *';
+
+  const [rawH, rawM] = (time || '09:00').split(':').map(Number);
+  const pktH = Number.isFinite(rawH) ? rawH : 9;
+  const pktM = Number.isFinite(rawM) ? rawM : 0;
+
+  if (useKarachiTz) {
+    return `CRON_TZ=Asia/Karachi ${pktM} ${pktH} * * *`;
+  }
+  const utcMins = (pktH * 60 + pktM - 300 + 1440) % 1440;
+  return `${utcMins % 60} ${Math.floor(utcMins / 60)} * * *`;
+}
 
 export default function Home() {
   const [trackingId, setTrackingId] = useState('');
@@ -37,6 +89,8 @@ export default function Home() {
   const [newPasscode, setNewPasscode] = useState('');
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [schedule, setSchedule] = useState('0 4 * * *');
+  const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>('daily');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
   const [qstashConfigured, setQstashConfigured] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
@@ -126,6 +180,9 @@ export default function Home() {
     const savedSchedule = localStorage.getItem('pakpost_schedule');
     if (savedSchedule) {
       setSchedule(savedSchedule);
+      const parsedLocal = parseCronToUi(savedSchedule);
+      setSchedulePreset(parsedLocal.preset);
+      setScheduleTime(parsedLocal.time);
     }
 
     fetch('/api/parcels')
@@ -135,6 +192,9 @@ export default function Home() {
         setQstashConfigured(Boolean(data.qstashConfigured));
         if (data.schedule) {
           setSchedule(data.schedule);
+          const parsedServer = parseCronToUi(data.schedule);
+          setSchedulePreset(parsedServer.preset);
+          setScheduleTime(parsedServer.time);
           localStorage.setItem('pakpost_schedule', data.schedule);
         }
 
@@ -374,7 +434,13 @@ export default function Home() {
 
     try {
       const cleanWebhook = webhookUrl.trim();
-      const cleanSchedule = schedule.trim() || '0 4 * * *';
+      const cleanSchedule = buildCronFromUi(
+        schedulePreset,
+        scheduleTime,
+        schedule,
+        qstashConfigured
+      );
+      setSchedule(cleanSchedule);
 
       if (cleanWebhook) {
         localStorage.setItem('pakpost_discord_webhook', cleanWebhook);
@@ -776,24 +842,78 @@ export default function Home() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <label
-                  htmlFor="schedule"
+                  htmlFor="schedulePreset"
                   className="block text-xs font-mono uppercase tracking-wider text-white/80"
                 >
-                  Schedule (Cron)
+                  Check Schedule
                 </label>
                 <span className="text-[10px] font-mono text-white/50 uppercase">
                   {qstashConfigured ? 'QStash Live' : 'Static vercel.json'}
                 </span>
               </div>
-              <input
-                id="schedule"
-                type="text"
-                disabled={!isUnlocked}
-                value={schedule}
-                onChange={(e) => setSchedule(e.target.value)}
-                placeholder="0 4 * * * or CRON_TZ=Asia/Karachi 0 9 * * *"
-                className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-              />
+
+              <div className="flex items-center gap-2">
+                <select
+                  id="schedulePreset"
+                  disabled={!isUnlocked}
+                  value={schedulePreset}
+                  onChange={(e) => {
+                    const next = e.target.value as SchedulePreset;
+                    setSchedulePreset(next);
+                    setSchedule(buildCronFromUi(next, scheduleTime, schedule, qstashConfigured));
+                  }}
+                  className="flex-1 px-3 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  <option value="daily" className="bg-zinc-950 text-white">
+                    Daily (PKT)
+                  </option>
+                  <option value="12h" className="bg-zinc-950 text-white">
+                    Every 12 hours
+                  </option>
+                  <option value="6h" className="bg-zinc-950 text-white">
+                    Every 6 hours
+                  </option>
+                  <option value="3h" className="bg-zinc-950 text-white">
+                    Every 3 hours
+                  </option>
+                  <option value="hourly" className="bg-zinc-950 text-white">
+                    Hourly
+                  </option>
+                  <option value="custom" className="bg-zinc-950 text-white">
+                    Custom Cron
+                  </option>
+                </select>
+
+                {schedulePreset === 'daily' && (
+                  <input
+                    id="scheduleTime"
+                    type="time"
+                    aria-label="Daily check time (PKT)"
+                    disabled={!isUnlocked}
+                    value={scheduleTime}
+                    onChange={(e) => {
+                      const nextTime = e.target.value || '09:00';
+                      setScheduleTime(nextTime);
+                      setSchedule(
+                        buildCronFromUi('daily', nextTime, schedule, qstashConfigured)
+                      );
+                    }}
+                    className="w-32 px-3 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white [color-scheme:dark] focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  />
+                )}
+              </div>
+
+              {schedulePreset === 'custom' && (
+                <input
+                  id="schedule"
+                  type="text"
+                  disabled={!isUnlocked}
+                  value={schedule}
+                  onChange={(e) => setSchedule(e.target.value)}
+                  placeholder="0 4 * * * or CRON_TZ=Asia/Karachi 0 9 * * *"
+                  className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                />
+              )}
             </div>
 
             {/* Change Webhook (Discord, Slack, or JSON) */}

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ParcelConfig, TrackingResult } from './types';
 import { getRedis } from './redis';
+import { isValidCronExpression } from './qstash';
 import {
   encrypt,
   decrypt,
@@ -144,8 +145,8 @@ export async function getDiscordWebhookUrl(): Promise<string | undefined> {
     try {
       const stored = await redis.get<string>(REDIS_WEBHOOK_KEY);
       if (stored && typeof stored === 'string') {
-        const decrypted = decrypt(stored);
-        if (decrypted && decrypted.trim()) return decrypted.trim();
+        const decrypted = decrypt(stored).trim();
+        if (decrypted && /^https?:\/\//i.test(decrypted)) return decrypted;
       }
 
       // Check legacy unencrypted
@@ -176,8 +177,8 @@ export async function getScheduleCron(): Promise<string> {
     try {
       const stored = await redis.get<string>(REDIS_SCHEDULE_KEY);
       if (stored && typeof stored === 'string') {
-        const decrypted = decrypt(stored);
-        if (decrypted && decrypted.trim()) return decrypted.trim();
+        const decrypted = decrypt(stored).trim();
+        if (decrypted && isValidCronExpression(decrypted)) return decrypted;
       }
     } catch (err) {
       console.error('Error getting schedule from Redis:', err);
