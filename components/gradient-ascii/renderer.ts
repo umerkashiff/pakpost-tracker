@@ -446,27 +446,38 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
   const resize = () => {
     if (!settings) return;
     const rect = canvas.getBoundingClientRect();
-    dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
-    cssW = Math.max(1, rect.width);
-    cssH = Math.max(1, rect.height);
+    const rawDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+    dpr = Math.min(Number.isFinite(rawDpr) ? rawDpr : 1, maxDpr);
+    cssW = Math.max(1, Math.min(4000, Number.isFinite(rect.width) && rect.width > 0 ? rect.width : 800));
+    cssH = Math.max(1, Math.min(4000, Number.isFinite(rect.height) && rect.height > 0 ? rect.height : 600));
     const w = Math.max(1, Math.round(cssW * dpr));
     const h = Math.max(1, Math.round(cssH * dpr));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
     }
-    cellH = Math.max(4, Math.round(settings.cellSize * dpr));
-    cellW = Math.max(3, Math.round(settings.cellSize * 0.6 * dpr));
-    const nextCols = Math.ceil(w / cellW);
-    const nextRows = Math.ceil(h / cellH);
+    const safeCellSize =
+      typeof settings.cellSize === 'number' && Number.isFinite(settings.cellSize) && settings.cellSize >= 4
+        ? settings.cellSize
+        : 16;
+    cellH = Math.max(6, Math.round(safeCellSize * dpr));
+    cellW = Math.max(4, Math.round(safeCellSize * 0.6 * dpr));
+    const rawCols = Math.ceil(w / cellW);
+    const rawRows = Math.ceil(h / cellH);
+    const nextCols = Math.min(350, Math.max(1, Number.isFinite(rawCols) ? rawCols : 50));
+    const nextRows = Math.min(250, Math.max(1, Number.isFinite(rawRows) ? rawRows : 50));
     offsetX = Math.floor((w - nextCols * cellW) / 2);
     offsetY = Math.floor((h - nextRows * cellH) / 2);
     if (nextCols !== cols || nextRows !== rows || energy.length !== nextCols * nextRows) {
       cols = nextCols;
       rows = nextRows;
-      energy = new Float32Array(cols * rows);
-      energyBytes = new Uint8Array(cols * rows);
-      uploadEnergy();
+      try {
+        energy = new Float32Array(cols * rows);
+        energyBytes = new Uint8Array(cols * rows);
+        uploadEnergy();
+      } catch (err) {
+        console.warn('GradientASCII memory allocation fallback:', err);
+      }
     }
     gl.viewport(0, 0, w, h);
     buildAtlas();

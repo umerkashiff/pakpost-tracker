@@ -119,10 +119,9 @@
 .frame {
   position: relative;
   overflow: hidden;
-  aspect-ratio: 741 / 600;
-  min-height: 280px;
-  border: 1px solid var(--stage-edge);
-  border-radius: 14px;
+  width: 100%;
+  height: 100%;
+  border: none;
   background: var(--stage);
 }
 .stage {
