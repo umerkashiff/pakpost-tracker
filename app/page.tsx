@@ -133,10 +133,27 @@ export default function Home() {
     }).catch(() => {});
   };
 
-  const handleSaveWebhook = (urlValue: string) => {
-    setWebhookUrl(urlValue);
-    localStorage.setItem('pakpost_discord_webhook', urlValue.trim());
-    setSettingsFeedback('Webhook saved.');
+  const [copiedVercel, setCopiedVercel] = useState(false);
+
+  const handleSaveWebhook = (urlValue?: string) => {
+    const val = (urlValue !== undefined ? urlValue : webhookUrl).trim();
+    setWebhookUrl(val);
+    if (val) {
+      localStorage.setItem('pakpost_discord_webhook', val);
+      setSettingsFeedback('Webhook saved.');
+    } else {
+      localStorage.removeItem('pakpost_discord_webhook');
+      setSettingsFeedback('Webhook cleared.');
+    }
+  };
+
+  const handleCopyVercelString = () => {
+    const str = trackedParcels
+      .map((p) => (p.label ? `${p.id}:${p.label}` : p.id))
+      .join(',');
+    navigator.clipboard.writeText(str);
+    setCopiedVercel(true);
+    setTimeout(() => setCopiedVercel(false), 2000);
   };
 
   const handleTestWebhook = async () => {
@@ -415,20 +432,47 @@ export default function Home() {
               <label htmlFor="webhook" className="block text-xs font-mono uppercase tracking-wider text-neutral-600 dark:text-neutral-400">
                 Discord Webhook URL
               </label>
-              <input
-                id="webhook"
-                type="url"
-                value={webhookUrl}
-                onChange={(e) => handleSaveWebhook(e.target.value)}
-                placeholder="https://discord.com/api/webhooks/..."
-                className="w-full px-3 py-2 text-xs font-mono border border-black dark:border-neutral-700 bg-transparent focus:outline-none"
-              />
+              <div className="flex gap-2">
+                <input
+                  id="webhook"
+                  type="url"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                  placeholder="https://discord.com/api/webhooks/..."
+                  className="flex-1 px-3 py-2 text-xs font-mono border border-black dark:border-neutral-700 bg-transparent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveWebhook()}
+                  className="px-3 py-2 border border-black dark:border-neutral-700 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black text-xs font-mono uppercase font-semibold"
+                >
+                  Save
+                </button>
+              </div>
               <p className="text-[11px] font-mono text-neutral-500">
                 {isServerDiscordSet
                   ? 'Server environment variable DISCORD_WEBHOOK_URL is configured.'
                   : 'Daily updates will be posted to this Discord webhook.'}
               </p>
             </div>
+
+            {trackedParcels.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800 text-xs font-mono">
+                <div className="flex items-center justify-between text-neutral-600 dark:text-neutral-400">
+                  <span className="uppercase tracking-wider">Vercel TRACKING_IDS Env</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyVercelString}
+                    className="underline text-[11px] hover:text-black dark:hover:text-white"
+                  >
+                    {copiedVercel ? 'Copied!' : 'Copy Value'}
+                  </button>
+                </div>
+                <div className="p-2 border border-neutral-200 dark:border-neutral-800 text-[11px] break-all select-all text-neutral-500">
+                  {trackedParcels.map((p) => (p.label ? `${p.id}:${p.label}` : p.id)).join(',')}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1.5 pt-2 border-t border-neutral-200 dark:border-neutral-800 text-xs font-mono text-neutral-500">
               <div>Schedule: Daily at 09:00 AM PKT (04:00 UTC)</div>
