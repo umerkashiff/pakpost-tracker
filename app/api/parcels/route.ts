@@ -3,15 +3,23 @@ import fs from 'fs';
 import path from 'path';
 import {
   getTrackedParcels,
+  getPublicTrackedParcels,
   saveTrackedParcels,
   getDiscordWebhookUrl,
   saveDiscordWebhookUrl,
   getScheduleCron,
-  saveScheduleCron
+  saveScheduleCron,
+  getParcelByAliasOrId
 } from '@/lib/config';
+import { generateAlias } from '@/lib/crypto';
 
-export async function GET() {
-  const parcels = await getTrackedParcels();
+export async function GET(request: NextRequest) {
+  const authPasscode = request.nextUrl.searchParams.get('passcode');
+  const isOwner = authPasscode === 'uwu123';
+
+  // For public visitors: return strictly masked IDs and aliases
+  // Only with valid passcode are raw IDs ever accessible
+  const parcels = isOwner ? await getTrackedParcels() : await getPublicTrackedParcels();
   const webhookUrl = await getDiscordWebhookUrl();
   const hasDiscord = Boolean(webhookUrl && webhookUrl.trim());
   const schedule = await getScheduleCron();
@@ -27,13 +35,17 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, id, label, passcode, webhookUrl, schedule } = body;
+    const { action, id, alias, label, passcode, webhookUrl, schedule } = body;
+
+    // Security check: only passcode "uwu123" can modify tracked items or settings
+    if (passcode !== 'uwu123') {
+      return NextResponse.json(
+        { error: 'Unauthorized: Passcode "uwu123" required to modify tracked parcels or settings.' },
+        { status: 403 }
+      );
+    }
 
     if (action === 'settings') {
-      if (passcode !== 'uwu123') {
-        return NextResponse.json({ error: 'Invalid passcode' }, { status: 403 });
-      }
-
       if (schedule) {
         await saveScheduleCron(schedule.trim());
 
@@ -86,16 +98,20 @@ export async function POST(request: NextRequest) {
         parcels.push({ id: cleanId, label: label?.trim() || undefined, enabled: true });
       }
     } else if (action === 'remove') {
-      const index = parcels.findIndex((p) => p.id === cleanId);
+      const targetIdentifier = (alias || id || '').trim();
+      const index = parcels.findIndex(
+        (p) => generateAlias(p.id) === targetIdentifier || p.id.toUpperCase() === targetIdentifier.toUpperCase()
+      );
       if (index !== -1) {
         parcels.splice(index, 1);
       }
     }
 
-    // Persist to Upstash Redis and parcels.json
+    // Persist AES-256 encrypted to Upstash Redis
     await saveTrackedParcels(parcels);
 
-    return NextResponse.json({ success: true, parcels });
+    const publicParcels = await getPublicTrackedParcels();
+    return NextResponse.json({ success: true, parcels: publicParcels });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Failed to update parcels' },

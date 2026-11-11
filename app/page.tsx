@@ -6,7 +6,8 @@ import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
 
 interface TrackedItem {
-  id: string;
+  id: string; // The masked ID string, e.g. "LT••••••NL"
+  alias?: string; // Opaque security token
   label?: string;
 }
 
@@ -140,11 +141,11 @@ export default function Home() {
 
   const hasWebhookConfigured = Boolean(isServerDiscordSet || webhookUrl.trim());
 
-  const handleTrack = async (idToTrack?: string) => {
+  const handleTrack = async (idToTrack?: string, aliasToTrack?: string) => {
     const targetId = (idToTrack || trackingId).trim().toUpperCase();
-    if (!targetId) return;
+    if (!targetId && !aliasToTrack) return;
 
-    setActiveTrackTarget(targetId);
+    setActiveTrackTarget(targetId || 'TRACKED PARCEL');
     setLoading(true);
     setError(null);
     setResult(null);
@@ -153,7 +154,10 @@ export default function Home() {
     setView('result');
 
     try {
-      const res = await fetch(`/api/track?id=${encodeURIComponent(targetId)}`);
+      const endpoint = aliasToTrack
+        ? `/api/track?alias=${encodeURIComponent(aliasToTrack)}`
+        : `/api/track?id=${encodeURIComponent(targetId)}`;
+      const res = await fetch(endpoint);
       const data = await res.json();
       if (!res.ok || data.error) {
         setError(data.error || 'Failed to fetch tracking data');
@@ -168,11 +172,21 @@ export default function Home() {
   };
 
   const isAlreadyTracked = (idToCheck: string) => {
-    return trackedParcels.some((p) => p.id.toUpperCase() === idToCheck.toUpperCase());
+    if (!idToCheck) return false;
+    const clean = idToCheck.toUpperCase();
+    return trackedParcels.some(
+      (p) => p.id.toUpperCase() === clean || (p.alias && p.alias === clean)
+    );
   };
 
   const handleAddToDailyTracking = () => {
     if (!result) return;
+
+    if (!isUnlocked) {
+      setSettingsFeedback('Unlock settings with passcode "uwu123" to add parcels.');
+      setView('settings');
+      return;
+    }
 
     if (!hasWebhookConfigured) {
       setSettingsFeedback('Set Discord Webhook in settings first.');
@@ -180,30 +194,62 @@ export default function Home() {
       return;
     }
 
-    const cleanId = result.trackingNo.toUpperCase();
+    const cleanId = activeTrackTarget || result.trackingNo.toUpperCase();
     if (isAlreadyTracked(cleanId)) return;
 
-    const updated = [...trackedParcels, { id: cleanId, label: result.label || undefined }];
+    const maskedId = censorId(cleanId);
+    const updated = [...trackedParcels, { id: maskedId, label: result.label || undefined }];
     setTrackedParcels(updated);
     localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(updated));
 
     fetch('/api/parcels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'add', id: cleanId, label: result.label || undefined })
-    }).catch(() => {});
+      body: JSON.stringify({
+        action: 'add',
+        id: cleanId,
+        label: result.label || undefined,
+        passcode: 'uwu123'
+      })
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.parcels && Array.isArray(data.parcels)) {
+          setTrackedParcels(data.parcels);
+          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(data.parcels));
+        }
+      })
+      .catch(() => {});
   };
 
-  const handleRemoveFromTracking = (idToRemove: string) => {
-    const updated = trackedParcels.filter((p) => p.id.toUpperCase() !== idToRemove.toUpperCase());
+  const handleRemoveFromTracking = (parcel: TrackedItem) => {
+    if (!isUnlocked) {
+      setSettingsFeedback('Unlock settings with passcode "uwu123" to delete parcels.');
+      setView('settings');
+      return;
+    }
+
+    const updated = trackedParcels.filter((p) => p.id !== parcel.id);
     setTrackedParcels(updated);
     localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(updated));
 
     fetch('/api/parcels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'remove', id: idToRemove })
-    }).catch(() => {});
+      body: JSON.stringify({
+        action: 'remove',
+        alias: parcel.alias || parcel.id,
+        passcode: 'uwu123'
+      })
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.parcels && Array.isArray(data.parcels)) {
+          setTrackedParcels(data.parcels);
+          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(data.parcels));
+        }
+      })
+      .catch(() => {});
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -483,12 +529,12 @@ export default function Home() {
               <div className="divide-y divide-white/15 border-y border-white/15">
                 {trackedParcels.map((parcel) => (
                   <div
-                    key={parcel.id}
+                    key={parcel.alias || parcel.id}
                     className="py-3 flex items-center justify-between gap-4 text-xs font-mono"
                   >
                     <div
                       onClick={() => {
-                        handleTrack(parcel.id);
+                        handleTrack(parcel.id, parcel.alias);
                       }}
                       className="cursor-pointer hover:underline"
                     >
@@ -504,7 +550,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => {
-                          handleTrack(parcel.id);
+                          handleTrack(parcel.id, parcel.alias);
                         }}
                         className="text-white/80 hover:text-white underline text-[11px]"
                       >
@@ -512,7 +558,7 @@ export default function Home() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleRemoveFromTracking(parcel.id)}
+                        onClick={() => handleRemoveFromTracking(parcel)}
                         className="text-white/60 hover:text-white transition"
                         title="Remove from tracking"
                       >

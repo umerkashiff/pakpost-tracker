@@ -2,19 +2,40 @@ import fs from 'fs';
 import path from 'path';
 import { ParcelConfig } from './types';
 import { getRedis } from './redis';
+import { encrypt, decrypt, generateAlias, maskTrackingId } from './crypto';
 
-const REDIS_PARCELS_KEY = 'pakpost:parcels';
-const REDIS_WEBHOOK_KEY = 'pakpost:webhook';
-const REDIS_SCHEDULE_KEY = 'pakpost:schedule';
+const REDIS_PARCELS_KEY = 'pakpost:enc:parcels';
+const REDIS_WEBHOOK_KEY = 'pakpost:enc:webhook';
+const REDIS_SCHEDULE_KEY = 'pakpost:enc:schedule';
+
+export interface PublicParcel {
+  id: string; // Masked ID: e.g. "LT••••••NL"
+  alias: string; // Opaque alias token
+  label?: string;
+}
 
 export async function getTrackedParcels(): Promise<ParcelConfig[]> {
-  // 1. Try Upstash Redis if configured
+  // 1. Try Upstash Redis with AES-256 decryption
   const redis = getRedis();
   if (redis) {
     try {
-      const stored = await redis.get<ParcelConfig[]>(REDIS_PARCELS_KEY);
-      if (Array.isArray(stored)) {
-        return stored;
+      const stored = await redis.get<string | ParcelConfig[]>(REDIS_PARCELS_KEY);
+      if (stored) {
+        if (typeof stored === 'string') {
+          const decrypted = decrypt(stored);
+          const parsed = JSON.parse(decrypted);
+          if (Array.isArray(parsed)) return parsed;
+        } else if (Array.isArray(stored)) {
+          return stored;
+        }
+      }
+
+      // Check legacy unencrypted key if needed
+      const legacy = await redis.get<ParcelConfig[]>('pakpost:parcels');
+      if (Array.isArray(legacy)) {
+        // Auto-migrate to encrypted
+        await saveTrackedParcels(legacy);
+        return legacy;
       }
     } catch (err) {
       console.error('Error fetching parcels from Redis:', err);
@@ -65,21 +86,37 @@ export async function getTrackedParcels(): Promise<ParcelConfig[]> {
   return parcels;
 }
 
+export async function getPublicTrackedParcels(): Promise<PublicParcel[]> {
+  const parcels = await getTrackedParcels();
+  return parcels.map((p) => ({
+    id: maskTrackingId(p.id),
+    alias: generateAlias(p.id),
+    label: p.label
+  }));
+}
+
+export async function getParcelByAliasOrId(identifier: string): Promise<ParcelConfig | undefined> {
+  const parcels = await getTrackedParcels();
+  const clean = identifier.trim().toUpperCase();
+  return parcels.find((p) => generateAlias(p.id) === identifier.trim() || p.id.toUpperCase() === clean);
+}
+
 export async function saveTrackedParcels(parcels: ParcelConfig[]): Promise<boolean> {
   let saved = false;
 
-  // 1. Save to Redis
+  // 1. Save AES-256 encrypted payload to Redis
   const redis = getRedis();
   if (redis) {
     try {
-      await redis.set(REDIS_PARCELS_KEY, parcels);
+      const cipher = encrypt(JSON.stringify(parcels));
+      await redis.set(REDIS_PARCELS_KEY, cipher);
       saved = true;
     } catch (err) {
       console.error('Error saving parcels to Redis:', err);
     }
   }
 
-  // 2. Attempt local file persist (for local development)
+  // 2. Attempt local file persist (for local development only)
   try {
     const configPath = path.join(process.cwd(), 'parcels.json');
     fs.writeFileSync(configPath, JSON.stringify(parcels, null, 2), 'utf8');
@@ -95,8 +132,15 @@ export async function getDiscordWebhookUrl(): Promise<string | undefined> {
   const redis = getRedis();
   if (redis) {
     try {
-      const url = await redis.get<string>(REDIS_WEBHOOK_KEY);
-      if (url && typeof url === 'string') return url;
+      const stored = await redis.get<string>(REDIS_WEBHOOK_KEY);
+      if (stored && typeof stored === 'string') {
+        const decrypted = decrypt(stored);
+        if (decrypted && decrypted.trim()) return decrypted.trim();
+      }
+
+      // Check legacy unencrypted
+      const legacy = await redis.get<string>('pakpost:webhook');
+      if (legacy && typeof legacy === 'string') return legacy;
     } catch (err) {
       console.error('Error getting webhook from Redis:', err);
     }
@@ -108,7 +152,8 @@ export async function saveDiscordWebhookUrl(url: string): Promise<void> {
   const redis = getRedis();
   if (redis) {
     try {
-      await redis.set(REDIS_WEBHOOK_KEY, url);
+      const cipher = encrypt(url.trim());
+      await redis.set(REDIS_WEBHOOK_KEY, cipher);
     } catch (err) {
       console.error('Error saving webhook to Redis:', err);
     }
@@ -119,8 +164,11 @@ export async function getScheduleCron(): Promise<string> {
   const redis = getRedis();
   if (redis) {
     try {
-      const schedule = await redis.get<string>(REDIS_SCHEDULE_KEY);
-      if (schedule && typeof schedule === 'string') return schedule;
+      const stored = await redis.get<string>(REDIS_SCHEDULE_KEY);
+      if (stored && typeof stored === 'string') {
+        const decrypted = decrypt(stored);
+        if (decrypted && decrypted.trim()) return decrypted.trim();
+      }
     } catch (err) {
       console.error('Error getting schedule from Redis:', err);
     }
@@ -145,7 +193,8 @@ export async function saveScheduleCron(schedule: string): Promise<void> {
   const redis = getRedis();
   if (redis) {
     try {
-      await redis.set(REDIS_SCHEDULE_KEY, schedule);
+      const cipher = encrypt(schedule.trim());
+      await redis.set(REDIS_SCHEDULE_KEY, cipher);
     } catch (err) {
       console.error('Error saving schedule to Redis:', err);
     }
