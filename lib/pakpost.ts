@@ -2,6 +2,78 @@ import * as cheerio from 'cheerio';
 import { TrackingResult, TrackingEvent, StatusCategory } from './types';
 import { fetchUpstreamTracking } from './upstream';
 
+function parseEmttsTimestamp(dateStr: string, timeStr: string): number {
+  if (!dateStr) return 0;
+  const parsed = new Date(`${dateStr} ${timeStr || '00:00'} GMT+0500`);
+  if (!isNaN(parsed.getTime())) return parsed.getTime();
+  const fallback = new Date(dateStr);
+  return !isNaN(fallback.getTime()) ? fallback.getTime() : 0;
+}
+
+function normalizeStatus(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Intelligently merge upstream international checkpoints with Pakistan Post EMTTS records:
+ * - Drops undated ("N/A") noise events from universal scrapers
+ * - Deduplicates identical or synonymous export EDI records
+ * - Sorts all events strictly chronologically (oldest first, newest last)
+ */
+function mergeAndDeduplicateEvents(
+  upstreamEvents: TrackingEvent[],
+  emttsEvents: TrackingEvent[]
+): TrackingEvent[] {
+  const result: TrackingEvent[] = [...emttsEvents];
+  const seenEmttsStatuses = new Set<string>();
+  const seenUpstreamDayKeys = new Set<string>();
+  const emttsDispatchDates = new Set<string>();
+
+  for (const ev of emttsEvents) {
+    const norm = normalizeStatus(ev.status);
+    seenEmttsStatuses.add(norm);
+    if (norm.includes('senditemtodestinationcountry')) {
+      emttsDispatchDates.add(ev.date.toLowerCase());
+    }
+  }
+
+  for (const uEv of upstreamEvents) {
+    // 1. Drop undated noise
+    if (!uEv.date || uEv.date === 'N/A' || !uEv.timestamp || uEv.timestamp <= 0) {
+      continue;
+    }
+
+    const norm = normalizeStatus(uEv.status);
+
+    // 2. Drop exact status duplicates already tracked by EMTTS
+    if (seenEmttsStatuses.has(norm)) {
+      continue;
+    }
+
+    // 3. Deduplicate UPU outward dispatch synonym on the exact same calendar day
+    if (
+      (norm.includes('departurefromoutwardofficeofexchange') ||
+        norm.includes('shipmentisreadyfortransporttothecountryofdestination')) &&
+      emttsDispatchDates.has(uEv.date.toLowerCase())
+    ) {
+      continue;
+    }
+
+    // 4. Deduplicate within upstream on same day + status
+    const dayKey = `${norm}__${uEv.date.toLowerCase()}`;
+    if (seenUpstreamDayKeys.has(dayKey)) {
+      continue;
+    }
+
+    seenUpstreamDayKeys.add(dayKey);
+    result.push(uEv);
+  }
+
+  // Chronological sort (oldest first -> latest last)
+  result.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  return result;
+}
+
 function determineStatusCategory(latestEvent: TrackingEvent | null, found: boolean): StatusCategory {
   if (!found || !latestEvent) {
     return 'PENDING';
@@ -36,7 +108,8 @@ function determineStatusCategory(latestEvent: TrackingEvent | null, found: boole
 
 export async function fetchPakistanPostTracking(
   rawId: string,
-  label?: string
+  label?: string,
+  options?: { bypassCache?: boolean }
 ): Promise<TrackingResult> {
   const trackingNo = rawId.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
@@ -117,10 +190,11 @@ export async function fetchPakistanPostTracking(
     const validDestination = destination !== 'N/A' && destination !== '' && destination.toLowerCase() !== 'n/a';
     let found = hasEvents || validDestination;
 
-    // Tag EMTTS events with Pakistan Post carrier
+    // Tag EMTTS events with Pakistan Post carrier and parse PKT timestamps
     const emttsEvents: TrackingEvent[] = events.map((ev) => ({
       ...ev,
-      carrier: 'Pakistan Post'
+      carrier: 'Pakistan Post',
+      timestamp: parseEmttsTimestamp(ev.date, ev.time)
     }));
 
     // Fetch upstream multi-carrier handoff tracking
@@ -133,7 +207,7 @@ export async function fetchPakistanPostTracking(
     let finalDestination = destination === 'N/A' && !found ? 'Not Available' : destination;
 
     try {
-      const upstream = await fetchUpstreamTracking(trackingNo);
+      const upstream = await fetchUpstreamTracking(trackingNo, options);
       if (upstream && upstream.found && upstream.events.length > 0) {
         upstreamCarrier = upstream.carrierName;
         finalOrigin =
@@ -153,8 +227,8 @@ export async function fetchPakistanPostTracking(
           found = true;
           handoffStatus = 'UPSTREAM_TRANSIT';
         } else {
-          // Combined journey: Upstream origin checkpoints + Pakistan Post domestic scans
-          mergedEvents = [...upstream.events, ...emttsEvents];
+          // Intelligently combine & deduplicate upstream + Pakistan Post scans
+          mergedEvents = mergeAndDeduplicateEvents(upstream.events, emttsEvents);
           // Check if any event represents physical domestic processing in Pakistan
           const hasDomesticScan = emttsEvents.some((e) => {
             const s = (e.status || '').toLowerCase();
@@ -204,7 +278,7 @@ export async function fetchPakistanPostTracking(
 
     // Even if Pakistan Post server fails or is unreachable, attempt upstream carrier directly
     try {
-      const upstream = await fetchUpstreamTracking(trackingNo);
+      const upstream = await fetchUpstreamTracking(trackingNo, options);
       if (upstream && upstream.found && upstream.events.length > 0) {
         return {
           trackingNo,

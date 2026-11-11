@@ -46,7 +46,7 @@ async function handleCheck(request: NextRequest) {
   const changedResults: TrackingResult[] = [];
 
   for (const parcel of parcels) {
-    const result = await fetchPakistanPostTracking(parcel.id, parcel.label);
+    const result = await fetchPakistanPostTracking(parcel.id, parcel.label, { bypassCache: true });
     results.push(result);
 
     const currentSig = computeTrackingSignature(result);
