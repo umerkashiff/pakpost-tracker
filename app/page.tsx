@@ -14,6 +14,7 @@ type ActiveView = 'search' | 'result' | 'daily' | 'settings';
 
 export default function Home() {
   const [trackingId, setTrackingId] = useState('');
+  const [activeTrackTarget, setActiveTrackTarget] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TrackingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +144,7 @@ export default function Home() {
     const targetId = (idToTrack || trackingId).trim().toUpperCase();
     if (!targetId) return;
 
+    setActiveTrackTarget(targetId);
     setLoading(true);
     setError(null);
     setResult(null);
@@ -340,8 +342,10 @@ export default function Home() {
           <div className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-white/20 pb-3">
               <div className="flex items-baseline gap-2">
-                <span className="font-mono text-lg font-bold text-white">
-                  {result ? result.trackingNo : trackingId}
+                <span className="font-mono text-lg font-bold text-white tracking-wider">
+                  {isAlreadyTracked(result ? result.trackingNo : (activeTrackTarget || trackingId))
+                    ? censorId(result ? result.trackingNo : (activeTrackTarget || trackingId))
+                    : (result ? result.trackingNo : (activeTrackTarget || trackingId))}
                 </span>
                 {result?.label && (
                   <span className="text-xs font-mono text-white/70">({result.label})</span>
@@ -405,7 +409,11 @@ export default function Home() {
                     <div className="text-xs font-mono uppercase tracking-wider text-white/70 flex items-center justify-between">
                       <span>History ({result.events.length})</span>
                       <a
-                        href={`https://ep.gov.pk/emtts/EPTrack_Live.aspx?ArticleIDz=${encodeURIComponent(result.trackingNo)}`}
+                        href={
+                          isAlreadyTracked(result.trackingNo)
+                            ? 'https://ep.gov.pk/emtts/'
+                            : `https://ep.gov.pk/emtts/EPTrack_Live.aspx?ArticleIDz=${encodeURIComponent(result.trackingNo)}`
+                        }
                         target="_blank"
                         rel="noreferrer"
                         className="text-white/70 hover:text-white inline-flex items-center gap-1 text-[11px]"
@@ -480,7 +488,6 @@ export default function Home() {
                   >
                     <div
                       onClick={() => {
-                        setTrackingId(parcel.id);
                         handleTrack(parcel.id);
                       }}
                       className="cursor-pointer hover:underline"
@@ -497,7 +504,6 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => {
-                          setTrackingId(parcel.id);
                           handleTrack(parcel.id);
                         }}
                         className="text-white/80 hover:text-white underline text-[11px]"
