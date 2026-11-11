@@ -8,11 +8,13 @@ export type { GradientAsciiProps };
 
 export default function GradientASCII(props: GradientAsciiProps) {
   return (
-    <div className="w-full h-full relative overflow-hidden">
+    <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden' }}>
       <GradientAscii
         controls={false}
         autoplay={false}
         decorative={true}
+        colorScheme="dark"
+        lightMode={false}
         shape="pinch"
         colors={props.colors || ['#0d9488', '#5eead4', '#f0fdfa']}
         characters={props.characters || CHARACTER_SETS.Classic}
@@ -21,7 +23,7 @@ export default function GradientASCII(props: GradientAsciiProps) {
         glyphOpacity={props.glyphOpacity ?? 0.85}
         gradientOpacity={props.gradientOpacity ?? 0.9}
         glow={props.glow ?? 0.2}
-        depthOfField={props.depthOfField ?? 10}
+        depthOfField={props.depthOfField ?? 0}
         flicker={props.flicker ?? 0.2}
         softness={props.softness ?? 0.5}
         scale={props.scale ?? 1}

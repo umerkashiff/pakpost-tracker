@@ -207,8 +207,9 @@ export function GradientAscii({
     }
     renderer.current = made;
     // It draws only while some of it is on screen and the tab is visible.
-    let onScreen = false;
+    let onScreen = true;
     const update = () => made.active(onScreen && !document.hidden);
+    update();
     const observer = new IntersectionObserver(([entry]) => {
       onScreen = entry.isIntersecting;
       update();
@@ -277,17 +278,22 @@ export function GradientAscii({
     <div
       ref={root}
       className={`${styles.root} ${className ?? ''}`}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
       data-color-scheme={colorScheme}
       onKeyDownCapture={take}
     >
       <span ref={probe} className={styles.probe} aria-hidden="true" />
-      <div className={styles.frame} data-part="frame">
+      <div
+        className={styles.frame}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+        data-part="frame"
+      >
         <div
           ref={stage}
           className={styles.stage}
           data-part="stage"
           data-failed={failed}
-          style={failed ? ({ '--fallback': fallbackOf(settings) } as CSSProperties) : undefined}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           role={decorative ? undefined : 'img'}
           aria-label={
             decorative ? undefined : `A soft ${settings.shape} of light drawn in characters`
@@ -305,7 +311,12 @@ export function GradientAscii({
             renderer.current?.click(x, y);
           }}
         >
-          <canvas ref={canvas} className={styles.canvas} aria-hidden="true" />
+          <canvas
+            ref={canvas}
+            className={styles.canvas}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
+            aria-hidden="true"
+          />
           <span className={styles.pointerLayer} aria-hidden="true">
             <span ref={pointer} className={styles.demoPointer}>
               <svg viewBox="0 0 20 20">

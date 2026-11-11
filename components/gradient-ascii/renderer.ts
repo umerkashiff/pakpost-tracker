@@ -445,13 +445,18 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
 
   const resize = () => {
     if (!settings) return;
-    const rect = canvas.getBoundingClientRect();
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
     const rawDpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
     dpr = Math.min(Number.isFinite(rawDpr) ? rawDpr : 1, 1.5);
-    cssW = Math.max(1, Math.round(rect.width || (typeof window !== 'undefined' ? window.innerWidth : 1200)));
-    cssH = Math.max(1, Math.round(rect.height || (typeof window !== 'undefined' ? window.innerHeight : 800)));
-    const w = Math.max(1, Math.round(cssW * dpr));
-    const h = Math.max(1, Math.round(cssH * dpr));
+    const parent = canvas.parentElement;
+    const rawW = (parent && parent.clientWidth > 0 ? parent.clientWidth : 0) || (typeof window !== 'undefined' ? window.innerWidth : 1200);
+    const rawH = (parent && parent.clientHeight > 0 ? parent.clientHeight : 0) || (typeof window !== 'undefined' ? window.innerHeight : 800);
+    cssW = Math.max(100, Math.min(3840, Math.round(rawW)));
+    cssH = Math.max(100, Math.min(2160, Math.round(rawH)));
+    const w = Math.max(100, Math.round(cssW * dpr));
+    const h = Math.max(100, Math.round(cssH * dpr));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
@@ -464,20 +469,16 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
     cellW = Math.max(4, Math.round(safeCellSize * 0.6 * dpr));
     const rawCols = Math.ceil(w / cellW);
     const rawRows = Math.ceil(h / cellH);
-    const nextCols = Math.min(250, Math.max(1, Number.isFinite(rawCols) ? rawCols : 50));
-    const nextRows = Math.min(180, Math.max(1, Number.isFinite(rawRows) ? rawRows : 50));
+    const nextCols = Math.min(400, Math.max(1, Number.isFinite(rawCols) ? rawCols : 50));
+    const nextRows = Math.min(300, Math.max(1, Number.isFinite(rawRows) ? rawRows : 50));
     offsetX = Math.floor((w - nextCols * cellW) / 2);
     offsetY = Math.floor((h - nextRows * cellH) / 2);
     if (nextCols !== cols || nextRows !== rows || energy.length !== nextCols * nextRows) {
       cols = nextCols;
       rows = nextRows;
-      try {
-        energy = new Float32Array(cols * rows);
-        energyBytes = new Uint8Array(cols * rows);
-        uploadEnergy();
-      } catch (err) {
-        console.warn('GradientASCII memory allocation fallback:', err);
-      }
+      energy = new Float32Array(cols * rows);
+      energyBytes = new Uint8Array(cols * rows);
+      uploadEnergy();
     }
     gl.viewport(0, 0, w, h);
     buildAtlas();
@@ -618,11 +619,13 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
     if (!running && settings) draw(performance.now());
   };
 
-  const observer = new ResizeObserver(() => {
+  const onWindowResize = () => {
     resize();
     if (!running) draw(performance.now());
-  });
-  observer.observe(canvas);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', onWindowResize);
+  }
 
   return {
     set(next, nextStill, nextMaxDpr = 2) {
@@ -696,7 +699,9 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer | null {
     destroy() {
       running = false;
       cancelAnimationFrame(raf);
-      observer.disconnect();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', onWindowResize);
+      }
       // The context stays with the canvas (React may mount the same canvas again); only this
       // renderer's own objects go.
       gl.deleteTexture(atlasTexture);
