@@ -37,25 +37,25 @@ Instead of firing requests at four scrapers at once and taking whichever respond
 
 ```mermaid
 flowchart TD
-    A["Input Tracking ID or Alias"] --> B{"Check Country Suffix / Prefix"}
-    B -->|"*PK (Domestic)"| C["Pakistan Post EMTTS Only"]
-    B -->|"*CN or LP*"| D["Cainiao Direct API"]
-    D -->|"No events"| E["UPU Scraper Fallback"]
-    B -->|"*NL"| F["UPU Scraper (PostNL / Spring GDS)"]
-    F -->|"Rate-limited or < 4 events"| G["PostNL Consumer Observations (No PII)"]
-    B -->|"Other International"| H["UPU Scraper"]
-    H -->|"Empty"| I["ParcelsApp Fallback"]
+    A[Tracking ID or Alias] --> B{Route by Country Prefix or Suffix}
+    B -->|Suffix PK| C[Pakistan Post EMTTS Only]
+    B -->|Suffix CN or Prefix LP| D[Cainiao Direct API]
+    D -->|Empty| E[UPU Scraper Fallback]
+    B -->|Suffix NL| F[UPU Scraper - PostNL and Spring GDS]
+    F -->|HTTP 429 or under 4 events| G[PostNL Consumer Observations - No PII]
+    B -->|Other International| H[UPU Scraper]
+    H -->|Empty| I[ParcelsApp Fallback]
 
-    C --> J["Pakistan Post EMTTS Fetch"]
-    E --> J
-    G --> J
-    I --> J
+    C --> J[Fetch Pakistan Post EMTTS]
     D --> J
+    E --> J
     F --> J
+    G --> J
     H --> J
+    I --> J
 
-    J --> K["mergeAndDeduplicateEvents() (Drop N/A & Same-Day EDI Dupes)"]
-    K --> L["Cache Upstream 15m in Redis + Return Clean Timeline"]
+    J --> K[Merge and Deduplicate Same-Day EDI Events]
+    K --> L[Cache Upstream 15m in Redis and Return Timeline]
 ```
 
 ---
@@ -66,23 +66,23 @@ Vercel Cron triggers `/api/cron` every day at `04:00 UTC` (`09:00 AM PKT` via `v
 
 ```mermaid
 sequenceDiagram
-    participant Cron as Vercel Cron (9:00 AM PKT)
-    participant API as /api/cron
-    participant Tracker as Upstream + EMTTS
+    participant Cron as Vercel Cron 0400 UTC
+    participant API as Cron Route
+    participant Tracker as Upstream and EMTTS
     participant Redis as Upstash Redis
     participant Discord as Discord Webhook
 
-    Cron->>API: Trigger GET /api/cron
+    Cron->>API: Trigger daily check at 9 AM PKT
     API->>Redis: Load AES-256 encrypted parcel list
     loop Each saved parcel
-        API->>Tracker: Fetch live status (bypassCache = true)
-        Tracker-->>API: Merged events + statusCategory
-        API->>Redis: Compare computeTrackingSignature() vs last hash
+        API->>Tracker: Fetch fresh tracking with cache bypass
+        Tracker-->>API: Merged events and status category
+        API->>Redis: Compare signature hash with last state
         alt Signature unchanged
             API-->>API: Skip alert
         else New checkpoint or status change
-            API->>Redis: Save new signature hash
-            API->>Discord: Post embed + top-level user ping
+            API->>Redis: Save updated signature hash
+            API->>Discord: Post embed and top-level user ping
         end
     end
 ```
