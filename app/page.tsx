@@ -40,6 +40,37 @@ export default function Home() {
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Disable right-click and common developer tool hotkeys to discourage casual inspection
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // F12
+      if (e.key === 'F12') {
+        e.preventDefault();
+      }
+      // Ctrl+Shift+I / Ctrl+Shift+J / Ctrl+Shift+C / Ctrl+U
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === 'u' ||
+          e.key === 'U' ||
+          (e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'J' || e.key === 'j' || e.key === 'C' || e.key === 'c')))
+      ) {
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const handleVerifyPasscode = async (candidate: string) => {
     setPasscode(candidate);
     if (!candidate.trim()) {
