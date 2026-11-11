@@ -47,3 +47,4 @@ export function getTrackedParcels(): ParcelConfig[] {
 
   return parcels;
 }
+

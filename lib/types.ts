@@ -26,3 +26,4 @@ export interface ParcelConfig {
   label?: string;
   enabled?: boolean;
 }
+
