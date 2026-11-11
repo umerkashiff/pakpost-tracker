@@ -15,3 +15,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ valid: false, error: 'Bad request' }, { status: 400 });
   }
 }
+

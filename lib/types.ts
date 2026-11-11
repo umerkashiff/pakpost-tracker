@@ -3,9 +3,13 @@ export interface TrackingEvent {
   time: string;
   location: string;
   status: string;
+  carrier?: string;
+  timestamp?: number;
 }
 
 export type StatusCategory = 'DELIVERED' | 'IN_TRANSIT' | 'BOOKED' | 'ATTEMPT_FAILED' | 'PENDING' | 'ERROR';
+
+export type HandoffStatus = 'UPSTREAM_TRANSIT' | 'HANDED_OFF_DOMESTIC' | 'DOMESTIC_ONLY';
 
 export interface TrackingResult {
   trackingNo: string;
@@ -18,6 +22,9 @@ export interface TrackingResult {
   totalEvents: number;
   events: TrackingEvent[];
   lastChecked: string;
+  upstreamCarrier?: string;
+  handoffStatus?: HandoffStatus;
+  isUpdated?: boolean;
   error?: string;
 }
 
@@ -26,4 +33,5 @@ export interface ParcelConfig {
   label?: string;
   enabled?: boolean;
 }
+
 

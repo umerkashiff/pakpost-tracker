@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getTrackedParcels } from '@/lib/config';
+import {
+  getTrackedParcels,
+  computeTrackingSignature,
+  getLastParcelSignature,
+  saveLastParcelSignature
+} from '@/lib/config';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
 import { sendDiscordNotification } from '@/lib/discord';
+import { TrackingResult } from '@/lib/types';
 
 async function handleCheck(request: NextRequest) {
   // 1. Verify Authorization if CRON_SECRET is configured
@@ -32,25 +38,57 @@ async function handleCheck(request: NextRequest) {
     });
   }
 
-  // 3. Track each parcel with concurrency limit to avoid overwhelming server
-  const results = [];
+  const forcePush = request.nextUrl.searchParams.get('force') === 'true';
+  const shouldNotify = request.nextUrl.searchParams.get('notify') !== 'false';
+
+  // 3. Track each parcel with diff detection
+  const results: TrackingResult[] = [];
+  const changedResults: TrackingResult[] = [];
+
   for (const parcel of parcels) {
     const result = await fetchPakistanPostTracking(parcel.id, parcel.label);
     results.push(result);
+
+    const currentSig = computeTrackingSignature(result);
+    const lastSig = await getLastParcelSignature(parcel.id);
+
+    const isChanged = forcePush || !lastSig || lastSig !== currentSig;
+    if (isChanged) {
+      result.isUpdated = true;
+      changedResults.push(result);
+      // Persist the updated signature so future runs only trigger on new events
+      await saveLastParcelSignature(parcel.id, currentSig);
+    }
+
     // 500ms delay between consecutive queries
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  // 4. Send notification to Discord unless notify=false
-  const shouldNotify = request.nextUrl.searchParams.get('notify') !== 'false';
-  let discordResult: { success: boolean; error?: string; count: number } = {
+  // 4. Send notification to Discord ONLY for parcels that actually changed
+  let discordResult: { success: boolean; error?: string; count: number; message?: string } = {
     success: false,
-    error: 'Notification skipped by param',
-    count: 0
+    count: 0,
+    message: 'Notification skipped'
   };
 
   if (shouldNotify) {
-    discordResult = await sendDiscordNotification(results);
+    if (changedResults.length > 0) {
+      const res = await sendDiscordNotification(changedResults);
+      discordResult = {
+        success: res.success,
+        error: res.error,
+        count: res.count,
+        message: res.success
+          ? `Dispatched alert for ${res.count} updated parcel(s)`
+          : res.error || 'Failed to dispatch alert'
+      };
+    } else {
+      discordResult = {
+        success: true,
+        count: 0,
+        message: 'Diff detection: 0 parcels advanced. Discord notification suppressed.'
+      };
+    }
   }
 
   const deliveredCount = results.filter((r) => r.statusCategory === 'DELIVERED').length;
@@ -60,6 +98,12 @@ async function handleCheck(request: NextRequest) {
     status: 'success',
     checkedAt: new Date().toISOString(),
     totalParcels: results.length,
+    changedParcelsCount: changedResults.length,
+    diffDetection: {
+      enabled: true,
+      forced: forcePush,
+      suppressed: changedResults.length === 0 && shouldNotify
+    },
     deliveredCount,
     inTransitCount,
     discord: discordResult,

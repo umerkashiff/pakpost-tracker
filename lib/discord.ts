@@ -57,13 +57,22 @@ export async function sendDiscordNotification(
 
   const embeds = results.map((result) => {
     const config = STATUS_CONFIG[result.statusCategory] || STATUS_CONFIG.PENDING;
+    const updatePrefix = result.isUpdated ? '🔔 [UPDATE] ' : '';
     const title = result.label
-      ? `${config.emoji} ${result.trackingNo} • ${result.label}`
-      : `${config.emoji} ${result.trackingNo}`;
+      ? `${updatePrefix}${config.emoji} ${result.trackingNo} • ${result.label}`
+      : `${updatePrefix}${config.emoji} ${result.trackingNo}`;
 
     const portalUrl = `https://ep.gov.pk/emtts/EPTrack_Live.aspx?ArticleIDz=${encodeURIComponent(result.trackingNo)}`;
 
     const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
+
+    if (result.upstreamCarrier) {
+      fields.push({
+        name: '🚚 Logistics Network',
+        value: `**${result.upstreamCarrier}**${result.handoffStatus === 'HANDED_OFF_DOMESTIC' ? ' ➔ **Pakistan Post**' : ' *(Origin / Cross-Border)*'}`,
+        inline: false
+      });
+    }
 
     if (result.found && result.latestEvent) {
       fields.push({
@@ -96,8 +105,12 @@ export async function sendDiscordNotification(
       if (result.events.length > 1) {
         const recentHistory = [...result.events]
           .reverse()
-          .slice(0, 3)
-          .map((e, idx) => `${idx === 0 ? '▶' : '•'} **${e.date} ${e.time ? `(${e.time})` : ''}**: ${e.status} — *${e.location}*`)
+          .slice(0, 4)
+          .map((e, idx) => {
+            const prefix = idx === 0 ? '▶' : '•';
+            const carrierTag = e.carrier ? ` *[${e.carrier}]*` : '';
+            return `${prefix} **${e.date} ${e.time ? `(${e.time})` : ''}**: ${e.status} — *${e.location}*${carrierTag}`;
+          })
           .join('\n');
 
         fields.push({
@@ -132,7 +145,9 @@ export async function sendDiscordNotification(
       color: config.color,
       fields,
       footer: {
-        text: `Pakistan Post EMTTS Daily Tracker • Status: ${config.label}`,
+        text: result.isUpdated
+          ? `✨ Checkpoint Advanced • Pakistan Post Tracker • ${config.label}`
+          : `Pakistan Post EMTTS Daily Tracker • Status: ${config.label}`,
         icon_url: 'https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/512px-Pakistan_Post_logo.svg.png'
       },
       timestamp: new Date().toISOString()

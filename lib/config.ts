@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { ParcelConfig } from './types';
+import { ParcelConfig, TrackingResult } from './types';
 import { getRedis } from './redis';
 import { encrypt, decrypt, generateAlias, maskTrackingId } from './crypto';
 
@@ -200,3 +200,49 @@ export async function saveScheduleCron(schedule: string): Promise<void> {
     }
   }
 }
+
+const REDIS_SIGNATURES_KEY = 'pakpost:enc:signatures';
+
+/**
+ * Compute an authoritative signature of a parcel's latest tracking state.
+ * Any change in statusCategory, event count, latest timestamp, location, or status
+ * produces a differing signature.
+ */
+export function computeTrackingSignature(result: TrackingResult): string {
+  const latest = result.latestEvent;
+  const latestDesc = latest
+    ? `${latest.date}_${latest.time}_${latest.status}_${latest.location}`.replace(/\s+/g, ' ').trim()
+    : 'NO_EVENT';
+  return `${result.statusCategory}:${result.totalEvents}:${latestDesc}`;
+}
+
+/**
+ * Retrieve the last recorded event signature for a parcel
+ */
+export async function getLastParcelSignature(parcelId: string): Promise<string | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    const raw = await redis.hget<string>(REDIS_SIGNATURES_KEY, parcelId.trim().toUpperCase());
+    return raw || null;
+  } catch (err) {
+    console.error('Error getting parcel signature from Redis:', err);
+    return null;
+  }
+}
+
+/**
+ * Save the latest event signature for a parcel to prevent duplicate alerts
+ */
+export async function saveLastParcelSignature(parcelId: string, signature: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    await redis.hset(REDIS_SIGNATURES_KEY, {
+      [parcelId.trim().toUpperCase()]: signature
+    });
+  } catch (err) {
+    console.error('Error saving parcel signature to Redis:', err);
+  }
+}
+

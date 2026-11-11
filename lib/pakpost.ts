@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { TrackingResult, TrackingEvent, StatusCategory } from './types';
+import { fetchUpstreamTracking } from './upstream';
 
 function determineStatusCategory(latestEvent: TrackingEvent | null, found: boolean): StatusCategory {
   if (!found || !latestEvent) {
@@ -114,26 +115,116 @@ export async function fetchPakistanPostTracking(
 
     const hasEvents = events.length > 0;
     const validDestination = destination !== 'N/A' && destination !== '' && destination.toLowerCase() !== 'n/a';
-    const found = hasEvents || validDestination;
+    let found = hasEvents || validDestination;
+
+    // Tag EMTTS events with Pakistan Post carrier
+    const emttsEvents: TrackingEvent[] = events.map((ev) => ({
+      ...ev,
+      carrier: 'Pakistan Post'
+    }));
+
+    // Fetch upstream multi-carrier handoff tracking
+    let upstreamCarrier: string | undefined;
+    let handoffStatus: 'UPSTREAM_TRANSIT' | 'HANDED_OFF_DOMESTIC' | 'DOMESTIC_ONLY' =
+      trackingNo.endsWith('PK') ? 'DOMESTIC_ONLY' : 'UPSTREAM_TRANSIT';
+
+    let mergedEvents = emttsEvents;
+    let finalOrigin = origin === 'N/A' && !found ? 'Not Available' : origin;
+    let finalDestination = destination === 'N/A' && !found ? 'Not Available' : destination;
+
+    try {
+      const upstream = await fetchUpstreamTracking(trackingNo);
+      if (upstream && upstream.found && upstream.events.length > 0) {
+        upstreamCarrier = upstream.carrierName;
+        finalOrigin =
+          finalOrigin === 'Not Available' || finalOrigin === 'N/A'
+            ? upstream.originCountry
+            : upstream.originCountry && !finalOrigin.toLowerCase().includes(upstream.originCountry.toLowerCase())
+              ? `${upstream.originCountry} (${finalOrigin})`
+              : finalOrigin;
+
+        if (finalDestination === 'Not Available' || finalDestination === 'N/A') {
+          finalDestination = 'Pakistan';
+        }
+
+        if (emttsEvents.length === 0) {
+          // Pakistan Post hasn't scanned yet, display upstream international checkpoints
+          mergedEvents = upstream.events;
+          found = true;
+          handoffStatus = 'UPSTREAM_TRANSIT';
+        } else {
+          // Combined journey: Upstream origin checkpoints + Pakistan Post domestic scans
+          mergedEvents = [...upstream.events, ...emttsEvents];
+          // Check if any event represents physical domestic processing in Pakistan
+          const hasDomesticScan = emttsEvents.some((e) => {
+            const s = (e.status || '').toLowerCase();
+            const loc = (e.location || '').toLowerCase();
+            return (
+              s.includes('receive item at office of exchange') ||
+              s.includes('received at') ||
+              s.includes('arrival at destination') ||
+              s.includes('dispatched to') ||
+              s.includes('delivered') ||
+              loc.includes('karachi') ||
+              loc.includes('lahore') ||
+              loc.includes('islamabad') ||
+              loc.includes('rawalpindi') ||
+              loc.includes('peshawar') ||
+              loc.includes('quetta') ||
+              loc.includes('o.e.')
+            );
+          });
+          handoffStatus = hasDomesticScan ? 'HANDED_OFF_DOMESTIC' : 'UPSTREAM_TRANSIT';
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching upstream tracking:', err);
+    }
 
     // The events are parsed in chronological order, so the last element is the latest checkpoint
-    const latestEvent = hasEvents ? events[events.length - 1] : null;
+    const latestEvent = mergedEvents.length > 0 ? mergedEvents[mergedEvents.length - 1] : null;
     const statusCategory = determineStatusCategory(latestEvent, found);
 
     return {
       trackingNo: parsedTrackingNo,
       label,
-      origin: origin === 'N/A' && !found ? 'Not Available' : origin,
-      destination: destination === 'N/A' && !found ? 'Not Available' : destination,
+      origin: finalOrigin,
+      destination: finalDestination,
       found,
       statusCategory,
       latestEvent,
-      totalEvents: events.length,
-      events,
+      totalEvents: mergedEvents.length,
+      events: mergedEvents,
+      upstreamCarrier,
+      handoffStatus,
       lastChecked: new Date().toISOString()
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to reach Pakistan Post server';
+
+    // Even if Pakistan Post server fails or is unreachable, attempt upstream carrier directly
+    try {
+      const upstream = await fetchUpstreamTracking(trackingNo);
+      if (upstream && upstream.found && upstream.events.length > 0) {
+        return {
+          trackingNo,
+          label,
+          origin: upstream.originCountry,
+          destination: 'Pakistan',
+          found: true,
+          statusCategory: upstream.statusCategory,
+          latestEvent: upstream.latestEvent,
+          totalEvents: upstream.events.length,
+          events: upstream.events,
+          upstreamCarrier: upstream.carrierName,
+          handoffStatus: 'UPSTREAM_TRANSIT',
+          lastChecked: new Date().toISOString()
+        };
+      }
+    } catch {
+      // ignore
+    }
+
     return {
       trackingNo,
       label,

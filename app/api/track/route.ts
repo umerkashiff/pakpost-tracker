@@ -10,9 +10,18 @@ function sanitizeResult(result: TrackingResult, realId: string, isTrackedParcel:
   const masked = maskTrackingId(realId);
   const regex = new RegExp(realId, 'gi');
 
+  const sanitizedLatest = result.latestEvent
+    ? {
+        ...result.latestEvent,
+        status: result.latestEvent.status.replace(regex, masked),
+        location: result.latestEvent.location.replace(regex, masked)
+      }
+    : null;
+
   return {
     ...result,
     trackingNo: masked,
+    latestEvent: sanitizedLatest,
     events: result.events.map((ev) => ({
       ...ev,
       status: ev.status.replace(regex, masked),

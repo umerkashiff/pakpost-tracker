@@ -462,7 +462,7 @@ export default function Home() {
             {loading && (
               <div className="py-12 flex flex-col items-center justify-center space-y-3 text-white/70 text-xs font-mono">
                 <RefreshCw className="w-5 h-5 animate-spin text-white" />
-                <span>Querying Pakistan Post...</span>
+                <span>Tracking across global carriers & Pakistan Post...</span>
               </div>
             )}
 
@@ -475,6 +475,17 @@ export default function Home() {
             {result && !loading && (
               <div className="space-y-4">
                 <div className="space-y-1.5 text-xs font-mono bg-black/40 border border-white/15 rounded-xl p-3.5">
+                  {result.upstreamCarrier && (
+                    <div className="flex">
+                      <span className="w-24 text-white/50 uppercase">Network:</span>
+                      <span className="text-white/90">
+                        {result.upstreamCarrier}
+                        {result.handoffStatus === 'HANDED_OFF_DOMESTIC'
+                          ? ' → Pakistan Post'
+                          : ' (Origin / International)'}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex">
                     <span className="w-24 text-white/50 uppercase">Status:</span>
                     <span className="font-semibold text-white">
@@ -527,8 +538,15 @@ export default function Home() {
                           className="text-xs font-mono border-l-2 border-white/40 pl-3 py-1 space-y-0.5"
                         >
                           <div className="font-semibold text-white">{ev.status}</div>
-                          <div className="text-white/70 text-[11px]">
-                            {ev.location} • {ev.date} {ev.time && `(${ev.time})`}
+                          <div className="text-white/70 text-[11px] flex items-center justify-between gap-2">
+                            <span>
+                              {ev.location} • {ev.date} {ev.time && `(${ev.time})`}
+                            </span>
+                            {ev.carrier && (
+                              <span className="text-[10px] font-mono text-white/40 uppercase whitespace-nowrap">
+                                [{ev.carrier.split(' ')[0]}]
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
