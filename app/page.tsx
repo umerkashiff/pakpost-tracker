@@ -53,25 +53,27 @@ export default function Home() {
           setSchedule(data.schedule);
         }
 
+        // Local list is the source of truth once it exists, so deletions persist across reloads.
         const localSaved = localStorage.getItem('pakpost_tracked_parcels');
-        let combined: TrackedItem[] = Array.isArray(data.parcels) ? data.parcels : [];
+        let list: TrackedItem[] | null = null;
 
-        if (localSaved) {
+        if (localSaved !== null) {
           try {
             const parsed = JSON.parse(localSaved);
-            if (Array.isArray(parsed)) {
-              for (const item of parsed) {
-                if (!combined.some((p) => p.id === item.id)) {
-                  combined.push(item);
-                }
-              }
-            }
+            if (Array.isArray(parsed)) list = parsed;
           } catch {
             // Ignore parse error
           }
         }
 
-        setTrackedParcels(combined);
+        if (list === null) {
+          list = Array.isArray(data.parcels)
+            ? data.parcels.map((p: TrackedItem) => ({ id: p.id, label: p.label }))
+            : [];
+          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(list));
+        }
+
+        setTrackedParcels(list);
       })
       .catch(() => {});
   }, []);
@@ -252,6 +254,11 @@ export default function Home() {
         />
       </div>
 
+      {/* Site title (small, centered at top) */}
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-30 text-[11px] font-mono uppercase tracking-wider text-white/80 pointer-events-none">
+        Pakistan Post Tracker
+      </div>
+
       {/* 2. Top Right Settings Button */}
       <header className="fixed top-5 right-5 z-40">
         <button
@@ -259,14 +266,14 @@ export default function Home() {
             setSettingsFeedback(null);
             setView(view === 'settings' ? 'search' : 'settings');
           }}
-          className="px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/25 hover:bg-black/45 backdrop-blur-md border border-white/15 text-white/80 hover:text-white transition-all flex items-center gap-1.5"
+          className="px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/60 hover:bg-black/80 border border-white/20 text-white/90 hover:text-white transition-all shadow-lg flex items-center gap-1.5"
         >
           <Settings className="w-3.5 h-3.5" />
           {view === 'settings' ? 'Close' : 'Settings'}
         </button>
       </header>
 
-      {/* 3. Centered Glass Stage (All views animate via blur/opacity/scale without display:none) */}
+      {/* 3. Centered Stage (Blur out of existence / unblur into existence with less opaque black shade) */}
       <div className="relative z-10 w-full max-w-lg px-4 flex items-center justify-center pointer-events-none">
         {/* VIEW A: Centered Tracking ID Bar */}
         <div
@@ -275,14 +282,14 @@ export default function Home() {
             view === 'search'
               ? 'opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
               : view === 'daily'
-                ? 'opacity-0 blur-2xl scale-90 -translate-y-10 pointer-events-none'
+                ? 'opacity-0 blur-2xl scale-90 -translate-y-8 pointer-events-none'
                 : 'opacity-0 blur-2xl scale-90 translate-y-0 pointer-events-none'
           }`}
         >
-          <div className="backdrop-blur-md bg-black/25 border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.35)] rounded-2xl p-6">
+          <div className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6">
             <label
               htmlFor="mainTrackingInput"
-              className="block text-xs font-mono uppercase tracking-wider text-white/70 mb-2"
+              className="block text-xs font-mono uppercase tracking-wider text-white/80 mb-2 font-medium"
             >
               Tracking ID
             </label>
@@ -299,13 +306,13 @@ export default function Home() {
                 value={trackingId}
                 onChange={(e) => setTrackingId(e.target.value.toUpperCase())}
                 placeholder="e.g. RB491028374PK"
-                className="flex-1 px-4 py-2.5 text-sm font-mono bg-white/[0.05] border border-white/15 rounded-xl text-white placeholder-white/35 focus:outline-none focus:border-white/50 transition"
+                className="flex-1 px-4 py-2.5 text-sm font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
                 required
               />
               <button
                 type="submit"
                 disabled={loading}
-                className="px-5 py-2.5 bg-white/90 hover:bg-white text-black rounded-xl text-xs font-mono uppercase tracking-wider font-bold transition disabled:opacity-50"
+                className="px-5 py-2.5 bg-white/90 hover:bg-white text-black rounded-xl text-xs font-mono uppercase tracking-wider font-bold transition disabled:opacity-50 shadow-md"
               >
                 Track
               </button>
@@ -313,23 +320,23 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW B: Translucent Glass Result Card */}
+        {/* VIEW B: Shaded Result Card */}
         <div
           aria-hidden={view !== 'result'}
           className={`absolute w-[calc(100%-2rem)] max-w-lg transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
             view === 'result'
               ? 'opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
-              : 'opacity-0 blur-2xl scale-90 translate-y-4 pointer-events-none'
+              : 'opacity-0 blur-2xl scale-90 translate-y-8 pointer-events-none'
           }`}
         >
-          <div className="backdrop-blur-md bg-black/25 border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.4)] rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+          <div className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-white/20 pb-3">
               <div className="flex items-baseline gap-2">
                 <span className="font-mono text-lg font-bold text-white">
                   {result ? result.trackingNo : trackingId}
                 </span>
                 {result?.label && (
-                  <span className="text-xs font-mono text-white/60">({result.label})</span>
+                  <span className="text-xs font-mono text-white/70">({result.label})</span>
                 )}
               </div>
               <button
@@ -349,14 +356,14 @@ export default function Home() {
             )}
 
             {error && !loading && (
-              <div className="p-4 border border-white/20 bg-black/30 text-white text-xs font-mono rounded-xl">
+              <div className="p-4 border border-white/20 bg-black/60 text-white text-xs font-mono rounded-xl">
                 {error}
               </div>
             )}
 
             {result && !loading && (
               <div className="space-y-4">
-                <div className="space-y-1.5 text-xs font-mono bg-white/[0.04] border border-white/10 rounded-xl p-3.5">
+                <div className="space-y-1.5 text-xs font-mono bg-black/40 border border-white/15 rounded-xl p-3.5">
                   <div className="flex">
                     <span className="w-24 text-white/50 uppercase">Status:</span>
                     <span className="font-semibold text-white">
@@ -387,13 +394,13 @@ export default function Home() {
 
                 {result.events.length > 0 && (
                   <div className="space-y-2">
-                    <div className="text-xs font-mono uppercase tracking-wider text-white/60 flex items-center justify-between">
+                    <div className="text-xs font-mono uppercase tracking-wider text-white/70 flex items-center justify-between">
                       <span>History ({result.events.length})</span>
                       <a
                         href={`https://ep.gov.pk/emtts/EPTrack_Live.aspx?ArticleIDz=${encodeURIComponent(result.trackingNo)}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-white/60 hover:text-white inline-flex items-center gap-1 text-[11px]"
+                        className="text-white/70 hover:text-white inline-flex items-center gap-1 text-[11px]"
                       >
                         ep.gov.pk <ArrowUpRight className="w-3 h-3" />
                       </a>
@@ -402,10 +409,10 @@ export default function Home() {
                       {[...result.events].reverse().map((ev, i) => (
                         <div
                           key={i}
-                          className="text-xs font-mono border-l-2 border-white/30 pl-3 py-1 space-y-0.5"
+                          className="text-xs font-mono border-l-2 border-white/40 pl-3 py-1 space-y-0.5"
                         >
                           <div className="font-semibold text-white">{ev.status}</div>
-                          <div className="text-white/60 text-[11px]">
+                          <div className="text-white/70 text-[11px]">
                             {ev.location} • {ev.date} {ev.time && `(${ev.time})`}
                           </div>
                         </div>
@@ -415,11 +422,11 @@ export default function Home() {
                 )}
 
                 {!isAlreadyTracked(result.trackingNo) && (
-                  <div className="pt-2 border-t border-white/10">
+                  <div className="pt-2 border-t border-white/15">
                     <button
                       type="button"
                       onClick={handleAddToDailyTracking}
-                      className="w-full py-2.5 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition"
+                      className="w-full py-2.5 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md"
                     >
                       + Add to Daily Tracking
                     </button>
@@ -430,34 +437,34 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW C: Translucent Glass Daily Tracking Card (Unblurs on scroll) */}
+        {/* VIEW C: Shaded Daily Tracking Card (Unblurs on scroll) */}
         <div
           aria-hidden={view !== 'daily'}
           className={`absolute w-[calc(100%-2rem)] max-w-md transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
             view === 'daily'
               ? 'opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
-              : 'opacity-0 blur-2xl scale-90 translate-y-10 pointer-events-none'
+              : 'opacity-0 blur-2xl scale-90 translate-y-8 pointer-events-none'
           }`}
         >
-          <div className="backdrop-blur-md bg-black/25 border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.4)] rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+          <div className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-white/20 pb-3">
               <h2 className="text-xs font-mono uppercase tracking-wider font-bold text-white">
                 Daily Tracking ({trackedParcels.length})
               </h2>
               <button
                 onClick={() => setView('search')}
-                className="text-xs font-mono text-white/60 hover:text-white flex items-center gap-1 transition"
+                className="text-xs font-mono text-white/70 hover:text-white flex items-center gap-1 transition"
               >
                 <ArrowUp className="w-3.5 h-3.5" /> Search
               </button>
             </div>
 
             {trackedParcels.length === 0 ? (
-              <div className="text-xs font-mono text-white/50 py-6 text-center">
+              <div className="text-xs font-mono text-white/60 py-6 text-center">
                 No parcels in daily tracking.
               </div>
             ) : (
-              <div className="divide-y divide-white/10 border-y border-white/10">
+              <div className="divide-y divide-white/15 border-y border-white/15">
                 {trackedParcels.map((parcel) => (
                   <div
                     key={parcel.id}
@@ -472,7 +479,7 @@ export default function Home() {
                     >
                       <span className="font-bold text-white">{parcel.id}</span>
                       {parcel.label && (
-                        <span className="ml-2 text-white/60">({parcel.label})</span>
+                        <span className="ml-2 text-white/70">({parcel.label})</span>
                       )}
                     </div>
 
@@ -490,7 +497,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={() => handleRemoveFromTracking(parcel.id)}
-                        className="text-white/50 hover:text-white transition"
+                        className="text-white/60 hover:text-white transition"
                         title="Remove from tracking"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -503,32 +510,32 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW D: Translucent Glass Settings Card (Unblurs into existence when Settings clicked) */}
+        {/* VIEW D: Shaded Settings Card (Unblurs into existence when Settings clicked) */}
         <div
           aria-hidden={view !== 'settings'}
           className={`absolute w-[calc(100%-2rem)] max-w-md transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
             view === 'settings'
               ? 'opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
-              : 'opacity-0 blur-2xl scale-90 -translate-y-6 pointer-events-none'
+              : 'opacity-0 blur-2xl scale-90 -translate-y-8 pointer-events-none'
           }`}
         >
           <form
             onSubmit={handleSaveSettings}
-            className="backdrop-blur-md bg-black/25 border border-white/15 shadow-[0_8px_32px_rgba(0,0,0,0.4)] rounded-2xl p-6 space-y-4 text-white"
+            className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 text-white"
           >
-            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+            <div className="flex items-center justify-between border-b border-white/20 pb-3">
               <h2 className="text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-1.5">
                 {isUnlocked ? (
                   <Unlock className="w-3.5 h-3.5 text-white" />
                 ) : (
-                  <Lock className="w-3.5 h-3.5 text-white/60" />
+                  <Lock className="w-3.5 h-3.5 text-white/70" />
                 )}
                 Settings
               </h2>
               <button
                 type="button"
                 onClick={() => setView('search')}
-                className="text-white/60 hover:text-white transition"
+                className="text-white/70 hover:text-white transition"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -538,7 +545,7 @@ export default function Home() {
             <div className="space-y-1.5">
               <label
                 htmlFor="passcode"
-                className="block text-xs font-mono uppercase tracking-wider text-white/70"
+                className="block text-xs font-mono uppercase tracking-wider text-white/80"
               >
                 Passcode {isUnlocked ? '(Unlocked)' : '(Required to edit)'}
               </label>
@@ -548,7 +555,7 @@ export default function Home() {
                 value={passcode}
                 onChange={(e) => setPasscode(e.target.value)}
                 placeholder="Enter passcode..."
-                className="w-full px-3.5 py-2 text-xs font-mono bg-white/[0.05] border border-white/15 rounded-xl text-white placeholder-white/35 focus:outline-none focus:border-white/50"
+                className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
               />
             </div>
 
@@ -556,7 +563,7 @@ export default function Home() {
             <div className="space-y-1.5">
               <label
                 htmlFor="schedule"
-                className="block text-xs font-mono uppercase tracking-wider text-white/70"
+                className="block text-xs font-mono uppercase tracking-wider text-white/80"
               >
                 Change Schedule (Cron)
               </label>
@@ -567,7 +574,7 @@ export default function Home() {
                 value={schedule}
                 onChange={(e) => setSchedule(e.target.value)}
                 placeholder="0 4 * * *"
-                className="w-full px-3.5 py-2 text-xs font-mono bg-white/[0.05] border border-white/15 rounded-xl text-white placeholder-white/35 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
               />
             </div>
 
@@ -575,7 +582,7 @@ export default function Home() {
             <div className="space-y-1.5">
               <label
                 htmlFor="webhook"
-                className="block text-xs font-mono uppercase tracking-wider text-white/70"
+                className="block text-xs font-mono uppercase tracking-wider text-white/80"
               >
                 Change Webhook
               </label>
@@ -586,12 +593,12 @@ export default function Home() {
                 value={webhookUrl}
                 onChange={(e) => setWebhookUrl(e.target.value)}
                 placeholder="https://discord.com/api/webhooks/..."
-                className="w-full px-3.5 py-2 text-xs font-mono bg-white/[0.05] border border-white/15 rounded-xl text-white placeholder-white/35 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
               />
             </div>
 
             {settingsFeedback && (
-              <div className="p-2.5 text-xs font-mono border border-white/15 bg-white/[0.04] rounded-xl text-white/90">
+              <div className="p-2.5 text-xs font-mono border border-white/20 bg-black/40 rounded-xl text-white/90">
                 {settingsFeedback}
               </div>
             )}
@@ -599,7 +606,7 @@ export default function Home() {
             <button
               type="submit"
               disabled={!isUnlocked || savingSettings}
-              className="w-full py-2.5 bg-white/90 hover:bg-white text-black rounded-xl text-xs font-mono uppercase tracking-wider font-bold transition disabled:opacity-30 disabled:cursor-not-allowed"
+              className="w-full py-2.5 bg-white/90 hover:bg-white text-black rounded-xl text-xs font-mono uppercase tracking-wider font-bold transition disabled:opacity-30 disabled:cursor-not-allowed shadow-md"
             >
               {savingSettings ? 'Saving...' : 'Save Changes'}
             </button>
@@ -612,7 +619,7 @@ export default function Home() {
         {view === 'search' && (
           <button
             onClick={() => setView('daily')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-white/60 hover:text-white bg-black/25 backdrop-blur-md border border-white/10 transition"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-zinc-300 hover:text-white bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 transition shadow-xl"
           >
             <span>Daily Tracking ({trackedParcels.length})</span>
             <ArrowDown className="w-3 h-3" />
@@ -622,7 +629,7 @@ export default function Home() {
         {view !== 'search' && (
           <button
             onClick={() => setView('search')}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-white/60 hover:text-white bg-black/25 backdrop-blur-md border border-white/10 transition"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-zinc-300 hover:text-white bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 transition shadow-xl"
           >
             <ArrowUp className="w-3 h-3" />
             <span>Back to Search</span>
