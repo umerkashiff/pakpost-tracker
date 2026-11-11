@@ -1,0 +1,574 @@
+/* Gradient ASCII (gradient-ascii.tsx): a framed stage with the light drawn in characters, and
+   under it the Customize card with its panel of rows in three columns (two under 600px, one
+   under 380px: a container query on the component's own width).
+
+   Colours are the tokens below, light-dark(light, dark) where the two differ: the component takes
+   the color-scheme it inherits from the page (light unless the page says otherwise), or the one
+   its colorScheme prop sets (data-color-scheme). The light itself is drawn by the shader in
+   renderer.ts from its own colours; only the stage behind it comes from here.
+
+   Memory. The canvas is one layer, sized by its frame; the panel's fills, handles and knobs move
+   by width and transform on rows of fixed height, so a change never lays out the page around. */
+
+.root {
+  /* The stage behind the light, and its frame's edge. */
+  --stage: #f6f5f8;
+  --stage-edge: #e3e1e8;
+  /* The Customize card (the dark one is a white veil of 4% over the stage), the panel inside it
+     and its edge. */
+  --card: #efeef2;
+  --panel: #fff;
+  --panel-edge: rgb(0 0 0 / 0.07);
+  /* A row, a scrubber's fill, its ticks and its handle. */
+  --row: rgb(0 0 0 / 0.035);
+  --fill: rgb(0 0 0 / 0.05);
+  --tick: #d9d6df;
+  --handle: rgb(0 0 0 / 0.8);
+  /* Labels, values, the card's title. */
+  --label: #6a6772;
+  --value: #17151b;
+  --title: #17151b;
+  /* An open menu, its edge, a hovered option, its shadow. */
+  --menu: #fff;
+  --menu-edge: #e3e1e8;
+  --menu-hover: #efedf3;
+  --menu-shadow: rgb(0 0 0 / 0.12);
+  /* A switch on and off, and its knob. */
+  --switch-on: #27222e;
+  --switch-off: rgb(0 0 0 / 0.1);
+  --knob-on: #fff;
+  --knob-off: #fff;
+  /* The light edge reaches 3:1 on a row, so an off switch still reads as a control. */
+  --switch-edge: rgb(0 0 0 / 0.45);
+  /* The ring round a swatch, the replay and pause buttons and their icons (3:1 or more over any
+     light behind them), the focus ring. */
+  --swatch-ring: rgb(0 0 0 / 0.08);
+  --replay: rgb(255 255 255 / 0.62);
+  --replay-ink: rgb(23 21 27 / 0.6);
+  --focus: #4b4655;
+  /* What the probe reads to know the scheme (gradient-ascii.tsx). */
+  --probe: #000;
+  /* The same on both: the demo's pointer, as the system draws it. */
+  --pointer: #1c1c1e;
+  --pointer-edge: #fff;
+  --pointer-shadow: rgb(0 0 0 / 0.3);
+  position: relative;
+  container-type: inline-size;
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  color: var(--value);
+  font:
+    400 13px/19.5px Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+@supports (color: light-dark(#fff, #000)) {
+  .root {
+    --stage: light-dark(#f6f5f8, #120f17);
+    --stage-edge: light-dark(#e3e1e8, #2f293a);
+    --card: light-dark(#efeef2, #1c1920);
+    --panel: light-dark(#fff, #120f17);
+    --panel-edge: light-dark(rgb(0 0 0 / 0.07), rgb(255 255 255 / 0.055));
+    --row: light-dark(rgb(0 0 0 / 0.035), rgb(255 255 255 / 0.04));
+    --fill: light-dark(rgb(0 0 0 / 0.05), rgb(255 255 255 / 0.06));
+    --tick: light-dark(#d9d6df, #2f293a);
+    --handle: light-dark(rgb(0 0 0 / 0.8), rgb(255 255 255 / 0.9));
+    --label: light-dark(#6a6772, #aaa);
+    --value: light-dark(#17151b, #fff);
+    --title: light-dark(#17151b, #f4f4f5);
+    --menu: light-dark(#fff, #1b1722);
+    --menu-edge: light-dark(#e3e1e8, #2f293a);
+    --menu-hover: light-dark(#efedf3, #373044);
+    --menu-shadow: light-dark(rgb(0 0 0 / 0.12), rgb(0 0 0 / 0.4));
+    --switch-on: light-dark(#27222e, #d4d4d8);
+    --switch-off: light-dark(rgb(0 0 0 / 0.1), rgb(255 255 255 / 0.08));
+    --knob-on: light-dark(#fff, #27222e);
+    --knob-off: light-dark(#fff, #8b8794);
+    --switch-edge: light-dark(rgb(0 0 0 / 0.45), rgb(255 255 255 / 0.1));
+    --swatch-ring: light-dark(rgb(0 0 0 / 0.08), rgb(255 255 255 / 0.08));
+    --replay: light-dark(rgb(255 255 255 / 0.62), rgb(38 33 46 / 0.72));
+    --replay-ink: light-dark(rgb(23 21 27 / 0.6), rgb(244 244 245 / 0.7));
+    --focus: light-dark(#4b4655, #d9d4e4);
+    --probe: light-dark(#000, #fff);
+  }
+}
+.root[data-color-scheme='light'] {
+  color-scheme: light;
+}
+.root[data-color-scheme='dark'] {
+  color-scheme: dark;
+}
+.root[data-color-scheme='system'] {
+  color-scheme: light dark;
+}
+
+.probe {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  color: var(--probe);
+}
+
+/* The stage: a frame with the canvas filling it, and the pause and replay buttons in its corner. */
+.frame {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 741 / 600;
+  min-height: 280px;
+  border: 1px solid var(--stage-edge);
+  border-radius: 14px;
+  background: var(--stage);
+}
+.stage {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+/* Without WebGL: a still gradient from the colours and the shape (--fallback, set by the
+   component), or Atmosphere's if that is missing. */
+.stage[data-failed='true'] {
+  background: var(
+    --fallback,
+    radial-gradient(120% 75% at 50% 0%, #a5d8ff 0%, #38bdf8 30%, #1e3fd8 55%, transparent 75%)
+  );
+}
+.canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.replay {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: var(--replay);
+  color: var(--replay-ink);
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
+  transition: color 0.15s ease;
+}
+.pause {
+  right: 46px;
+}
+.replay svg {
+  width: 16px;
+  height: 16px;
+}
+.replay:hover {
+  color: var(--value);
+}
+
+/* The demo's pointer: it moves by a transform set every frame; a click presses it a little. */
+.pointerLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.demoPointer {
+  position: absolute;
+  top: -2px;
+  left: -3px;
+  display: block;
+  width: 22px;
+  height: 22px;
+  opacity: 0;
+  filter: drop-shadow(0 1px 1.5px var(--pointer-shadow));
+  transition: opacity 0.3s ease;
+  will-change: transform;
+}
+.demoPointer svg {
+  display: block;
+  width: 22px;
+  height: 22px;
+  overflow: visible;
+  fill: var(--pointer);
+  stroke: var(--pointer-edge);
+  transform-origin: 15% 10%;
+  transition: transform 0.12s ease;
+}
+.demoPointer[data-pressed='true'] svg {
+  transform: scale(0.86);
+}
+
+/* The Customize card: its head, then the panel. */
+.customize {
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: var(--card);
+}
+.customizeHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  padding: 8px 12px 10.4px 14.4px;
+}
+.customizeTitle {
+  margin: 0;
+  color: var(--title);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 21px;
+  letter-spacing: -0.01em;
+}
+.reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--label);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.reset svg {
+  width: 14px;
+  height: 14px;
+}
+.reset[data-shown='false'] {
+  visibility: hidden;
+}
+.reset:hover {
+  background: var(--row);
+  color: var(--value);
+}
+
+.panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px 12px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 9px;
+  background: var(--panel);
+}
+@container (max-width: 600px) {
+  .panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (max-width: 380px) {
+  .panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .colors {
+    grid-row: span 1;
+  }
+}
+
+/* A row: a label on the left, its value on the right. */
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: var(--row);
+  color: var(--value);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+}
+.row:focus-visible,
+.reset:focus-visible,
+.replay:focus-visible,
+.iconButton:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.label {
+  position: relative;
+  overflow: hidden;
+  color: var(--label);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.value {
+  position: relative;
+  flex: none;
+  color: var(--value);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A scrubber: the fill up to the value, nine ticks, and the handle at the fill's end. */
+.scrubber {
+  --share: 0;
+}
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--share) * 100%);
+  border-radius: 7px;
+  background: var(--fill);
+}
+.ticks {
+  position: absolute;
+  inset: 0;
+}
+.tick {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--tick);
+  transform: translate(-50%, -50%);
+}
+.handle {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--share) * 100% - 7.75px);
+  width: 3.5px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--handle);
+  /* At rest it still reaches 3:1 on its row. */
+  opacity: 0.55;
+  transform: translateY(-50%);
+  transition:
+    height 0.15s ease,
+    opacity 0.15s ease;
+}
+.scrubber:hover .handle,
+.scrubber:focus-visible .handle,
+.scrubber[data-dragging='true'] .handle {
+  height: 26px;
+  opacity: 0.9;
+}
+.scrubber[data-dragging='true'] {
+  cursor: grabbing;
+}
+
+/* A menu: its button shows the value and a chevron; the list opens under it. */
+.selectBox {
+  position: relative;
+  min-width: 0;
+}
+.selectValue {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--label);
+  transition: transform 0.15s ease;
+}
+.chevron[data-open='true'] {
+  transform: rotate(180deg);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--menu-edge);
+  border-radius: 10px;
+  background: var(--menu);
+  box-shadow: 0 8px 32px var(--menu-shadow);
+  outline: none;
+  animation: menuIn 0.14s ease-out;
+}
+@keyframes menuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.option {
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--label);
+  cursor: pointer;
+}
+.option[aria-selected='true'] {
+  color: var(--value);
+}
+.option[data-active='true'] {
+  background: var(--menu-hover);
+  color: var(--value);
+}
+
+/* A switch. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border: 1px solid var(--switch-edge);
+  border-radius: 999px;
+  background: var(--switch-off);
+  transition: background-color 0.16s ease;
+}
+.switch[data-on='true'] {
+  background: var(--switch-on);
+}
+.knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--knob-off);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.24);
+  transition:
+    transform 0.16s ease,
+    background-color 0.16s ease;
+}
+.switch[data-on='true'] .knob {
+  background: var(--knob-on);
+  transform: translateX(16px);
+}
+
+/* The colours: a head with minus and plus, then the swatches in a row. */
+.colors {
+  grid-row: span 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 8px 8px;
+  border-radius: 10px;
+  background: var(--row);
+}
+.colorsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding-left: 4px;
+}
+.colorButtons {
+  display: flex;
+  gap: 2px;
+}
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--label);
+  cursor: pointer;
+}
+.iconButton svg {
+  width: 14px;
+  height: 14px;
+}
+.iconButton:hover:not(:disabled) {
+  background: var(--fill);
+  color: var(--value);
+}
+.iconButton:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.swatches {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  min-height: 39px;
+}
+.swatch {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--swatch-ring);
+  cursor: pointer;
+}
+.swatch:first-child {
+  border-radius: 9px 4px 4px 9px;
+}
+.swatch:last-child {
+  border-radius: 4px 9px 9px 4px;
+}
+.swatch:has(:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.colorInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .handle,
+  .knob,
+  .switch,
+  .chevron,
+  .demoPointer,
+  .demoPointer svg {
+    transition: none;
+  }
+  .menu {
+    animation: none;
+  }
+}
