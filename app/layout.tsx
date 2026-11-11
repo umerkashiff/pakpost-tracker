@@ -15,6 +15,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Pakistan Post Tracker",
   description: "Automated Pakistan Post parcel tracker with Discord alerts",
+  icons: {
+    icon: [{ url: "/icon.png", sizes: "any" }],
+    apple: "/apple-icon.png",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
