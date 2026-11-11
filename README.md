@@ -113,6 +113,8 @@ Paste any destination URL into **Webhook URL** inside Settings (or `DISCORD_WEBH
 }
 ```
 
+To customize Discord embeds Slack formatting or JSON webhook payloads edit `lib/webhook-templates.ts`.
+
 ---
 
 ## API endpoints
