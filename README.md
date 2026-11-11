@@ -115,15 +115,16 @@ You can use this for whatever setup you have:
 ## Setting up your own copy
 
 1. Fork or clone this repo and deploy it to **Vercel**.
-2. Create a free **Upstash Redis** database (or attach Upstash from the Vercel Marketplace) and grab `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
-3. Add these environment variables in Vercel and redeploy once:
+2. Attach **Upstash Redis** from the Vercel Marketplace (or create a free one at Upstash) for `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (`KV_REST_API_*` works too).
+3. If you want to change the cron schedule right from Settings without redeploying also attach **Upstash QStash** (`QSTASH_TOKEN` and `QSTASH_URL`).
+4. Add your variables in Vercel and redeploy once:
 
 | Variable | What it does |
 |---|---|
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Stores your encrypted parcels webhook and hashes (`KV_REST_API_*` works too) |
 | `SETTINGS_PASSCODE` | Your password to open Settings and add or delete parcels (you can change it later inside Settings too) |
 | `CRON_SECRET` | Secures `/api/cron` and encrypts stored data (`ENCRYPTION_KEY` can also be set separately if you want) |
-| `QSTASH_TOKEN` | Optional token from Upstash QStash tab so changing schedule inside Settings updates live without redeploying |
+| `QSTASH_TOKEN` / `QSTASH_URL` | Optional Upstash QStash credentials so changing schedule inside Settings updates live without redeploying |
 | `DISCORD_WEBHOOK_URL` | Optional default Discord Slack or JSON webhook URL |
 | `DISCORD_PING_USER_ID` | Optional Discord user ID if you want Discord alerts to ping you |
 | `TRACKING_IDS` | Optional starter list like `CP123456789PK:Sample` |
