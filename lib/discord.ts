@@ -1,4 +1,5 @@
 import { TrackingResult, StatusCategory } from './types';
+import { getDiscordWebhookUrl } from './config';
 
 const STATUS_CONFIG: Record<StatusCategory, { color: number; emoji: string; label: string }> = {
   DELIVERED: {
@@ -37,7 +38,7 @@ export async function sendDiscordNotification(
   results: TrackingResult[],
   customWebhookUrl?: string
 ): Promise<{ success: boolean; error?: string; count: number }> {
-  const webhookUrl = customWebhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  const webhookUrl = customWebhookUrl || (await getDiscordWebhookUrl());
 
   if (!webhookUrl) {
     return {

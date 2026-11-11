@@ -1,24 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getTrackedParcels } from '@/lib/config';
+import {
+  getTrackedParcels,
+  saveTrackedParcels,
+  getDiscordWebhookUrl,
+  saveDiscordWebhookUrl,
+  getScheduleCron,
+  saveScheduleCron
+} from '@/lib/config';
 
 export async function GET() {
-  const parcels = getTrackedParcels();
-  const hasDiscord = Boolean(process.env.DISCORD_WEBHOOK_URL);
-
-  let schedule = '0 4 * * *';
-  try {
-    const vercelPath = path.join(process.cwd(), 'vercel.json');
-    if (fs.existsSync(vercelPath)) {
-      const vercelJson = JSON.parse(fs.readFileSync(vercelPath, 'utf8'));
-      if (vercelJson?.crons?.[0]?.schedule) {
-        schedule = vercelJson.crons[0].schedule;
-      }
-    }
-  } catch {
-    // Fallback to default schedule
-  }
+  const parcels = await getTrackedParcels();
+  const webhookUrl = await getDiscordWebhookUrl();
+  const hasDiscord = Boolean(webhookUrl && webhookUrl.trim());
+  const schedule = await getScheduleCron();
 
   return NextResponse.json({
     parcels,
@@ -39,6 +35,8 @@ export async function POST(request: NextRequest) {
       }
 
       if (schedule) {
+        await saveScheduleCron(schedule.trim());
+
         try {
           const vercelPath = path.join(process.cwd(), 'vercel.json');
           const vercelConfig = {
@@ -56,7 +54,9 @@ export async function POST(request: NextRequest) {
       }
 
       if (webhookUrl !== undefined) {
+        await saveDiscordWebhookUrl(webhookUrl.trim());
         process.env.DISCORD_WEBHOOK_URL = webhookUrl.trim();
+
         try {
           const envPath = path.join(process.cwd(), '.env.local');
           let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    const parcels = getTrackedParcels();
+    const parcels = await getTrackedParcels();
     const cleanId = (id || '').trim().toUpperCase();
 
     if (action === 'add') {
@@ -92,13 +92,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Try persisting to parcels.json if filesystem is writable
-    try {
-      const configPath = path.join(process.cwd(), 'parcels.json');
-      fs.writeFileSync(configPath, JSON.stringify(parcels, null, 2), 'utf8');
-    } catch {
-      // Serverless environments like Vercel have a read-only filesystem
-    }
+    // Persist to Upstash Redis and parcels.json
+    await saveTrackedParcels(parcels);
 
     return NextResponse.json({ success: true, parcels });
   } catch (err) {

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getDiscordWebhookUrl } from '@/lib/config';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const webhookUrl = body.webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+    const webhookUrl = body.webhookUrl || (await getDiscordWebhookUrl());
 
     if (!webhookUrl) {
       return NextResponse.json(

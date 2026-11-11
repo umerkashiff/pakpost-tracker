@@ -21,7 +21,7 @@ async function handleCheck(request: NextRequest) {
   }
 
   // 2. Load configured parcels
-  const parcels = getTrackedParcels();
+  const parcels = await getTrackedParcels();
 
   if (parcels.length === 0) {
     return NextResponse.json({
