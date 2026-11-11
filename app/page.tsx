@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check } from 'lucide-react';
+import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check, RotateCcw } from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
 
@@ -33,7 +33,8 @@ export default function Home() {
   const [runLoading, setRunLoading] = useState(false);
   const [copiedVercel, setCopiedVercel] = useState(false);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Canvas remount key for the refresh button
+  const [canvasKey, setCanvasKey] = useState(0);
 
   // Load initial data
   useEffect(() => {
@@ -61,7 +62,7 @@ export default function Home() {
               }
             }
           } catch {
-            // Ignore parse errors
+            // Ignore parse error
           }
         }
 
@@ -70,24 +71,25 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  // Listen to wheel events to transition between search and daily view
+  // Smooth, instant scroll detection for daily tracking
   useEffect(() => {
-    let timeout: NodeJS.Timeout | null = null;
+    let lastSwitchTime = 0;
+    const COOLDOWN_MS = 500;
 
     const handleWheel = (e: WheelEvent) => {
-      if (showSettings) return;
-      if (view === 'result') return; // In result view, wheel scrolls inside the modal if needed
+      if (showSettings || view === 'result') return;
 
-      if (Math.abs(e.deltaY) < 25) return;
+      const now = Date.now();
+      if (now - lastSwitchTime < COOLDOWN_MS) return;
 
-      if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => {
-        if (view === 'search' && e.deltaY > 25) {
-          setView('daily');
-        } else if (view === 'daily' && e.deltaY < -25) {
-          setView('search');
-        }
-      }, 40);
+      // Ultra-sensitive threshold: even 4px of wheel movement triggers the switch
+      if (e.deltaY > 4 && view === 'search') {
+        lastSwitchTime = now;
+        setView('daily');
+      } else if (e.deltaY < -4 && view === 'daily') {
+        lastSwitchTime = now;
+        setView('search');
+      }
     };
 
     let touchStartY = 0;
@@ -97,10 +99,15 @@ export default function Home() {
 
     const handleTouchEnd = (e: TouchEvent) => {
       if (showSettings || view === 'result') return;
+      const now = Date.now();
+      if (now - lastSwitchTime < COOLDOWN_MS) return;
+
       const deltaY = touchStartY - e.changedTouches[0].clientY;
-      if (view === 'search' && deltaY > 35) {
+      if (deltaY > 15 && view === 'search') {
+        lastSwitchTime = now;
         setView('daily');
-      } else if (view === 'daily' && deltaY < -35) {
+      } else if (deltaY < -15 && view === 'daily') {
+        lastSwitchTime = now;
         setView('search');
       }
     };
@@ -113,7 +120,6 @@ export default function Home() {
       window.removeEventListener('wheel', handleWheel);
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchend', handleTouchEnd);
-      if (timeout) clearTimeout(timeout);
     };
   }, [view, showSettings]);
 
@@ -127,7 +133,7 @@ export default function Home() {
     setError(null);
     setResult(null);
 
-    // Transition view to result so user sees the translucent result box unblurring
+    // Transition view to result so user sees the translucent result card unblur
     setView('result');
 
     try {
@@ -246,46 +252,57 @@ export default function Home() {
   };
 
   return (
-    <main
-      ref={containerRef}
-      className="relative w-screen h-screen overflow-hidden bg-black text-white font-sans select-none"
-    >
-      {/* 1. Background ASCII Layer */}
-      <div className="absolute inset-0 w-full h-full z-0 overflow-hidden pointer-events-auto">
-        <GradientASCII
-          colors={['#0d9488', '#5eead4', '#f0fdfa']}
-          shape="pinch"
-          characters=" .:-=+*#%@"
-          cellSize={16}
-          density={0.8}
-        />
-      </div>
+    <main className="min-h-screen w-screen overflow-hidden bg-black text-white font-sans select-none flex flex-col items-center justify-center p-4 relative">
+      {/* Top Header Controls */}
+      <header className="absolute top-5 inset-x-5 flex items-center justify-between z-40 max-w-5xl mx-auto">
+        <div className="text-xs font-mono uppercase tracking-widest text-neutral-400">
+          Pakistan Post Tracker
+        </div>
 
-      {/* 2. Top Right Settings Pill */}
-      <div className="absolute top-5 right-5 z-40">
         <button
           onClick={() => {
             setSettingsFeedback(null);
             setShowSettings(true);
           }}
-          className="px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/50 hover:bg-black/80 backdrop-blur-md border border-white/20 text-neutral-300 hover:text-white transition flex items-center gap-1.5 shadow-lg"
+          className="px-3.5 py-1.5 rounded-full text-xs font-mono uppercase tracking-wider bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/20 text-neutral-300 hover:text-white transition flex items-center gap-1.5 shadow-lg"
         >
           <Settings className="w-3.5 h-3.5" />
           Settings
         </button>
-      </div>
+      </header>
 
-      {/* 3. Centered Interactive Container */}
-      <div className="relative z-10 w-full h-full flex items-center justify-center p-4">
-        {/* VIEW A: Search Bar (Centered) */}
+      {/* Center Stage: Framed Lagoon GradientASCII Card */}
+      <div className="relative w-full max-w-[880px] h-[460px] md:h-[500px] rounded-2xl md:rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-black flex items-center justify-center">
+        {/* The Lagoon ASCII Canvas */}
+        <div key={canvasKey} className="absolute inset-0 w-full h-full pointer-events-auto">
+          <GradientASCII
+            colors={['#0d9488', '#5eead4', '#f0fdfa']}
+            shape="pinch"
+            characters=" .:-=+*#%@"
+            cellSize={16}
+            density={0.8}
+          />
+        </div>
+
+        {/* Reload canvas icon in top-right of card (like screenshot) */}
+        <button
+          type="button"
+          onClick={() => setCanvasKey((prev) => prev + 1)}
+          className="absolute top-3.5 right-3.5 z-20 p-2 rounded-lg bg-black/40 hover:bg-black/70 backdrop-blur-md border border-white/10 text-neutral-400 hover:text-white transition"
+          title="Restart animation"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+        </button>
+
+        {/* VIEW A: Centered Search Bar */}
         <div
-          className={`absolute w-full max-w-md transition-all duration-500 ease-out transform ${
+          className={`absolute w-[90%] max-w-md transition-all duration-500 ease-out transform ${
             view === 'search'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto'
-              : 'opacity-0 blur-md scale-95 pointer-events-none'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
+              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
           }`}
         >
-          <div className="backdrop-blur-xl bg-black/60 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4">
+          <div className="backdrop-blur-xl bg-black/65 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4">
             <div className="space-y-1">
               <label
                 htmlFor="mainTrackingInput"
@@ -306,7 +323,7 @@ export default function Home() {
                   value={trackingId}
                   onChange={(e) => setTrackingId(e.target.value.toUpperCase())}
                   placeholder="e.g. LT880952265NL"
-                  className="flex-1 px-4 py-2.5 text-sm font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
+                  className="flex-1 px-4 py-2.5 text-sm font-mono bg-black/50 border border-white/20 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition"
                   required
                   autoFocus={view === 'search'}
                 />
@@ -320,7 +337,6 @@ export default function Home() {
               </form>
             </div>
 
-            {/* Quick sample prompt */}
             <div className="pt-1 flex items-center justify-between text-[11px] font-mono text-neutral-400">
               <span>Sample:</span>
               <button
@@ -337,15 +353,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW B: Result Glass Box (Unblurs into view when tracked) */}
+        {/* VIEW B: Translucent Glass Result Box */}
         <div
-          className={`absolute w-full max-w-lg transition-all duration-500 ease-out transform ${
+          className={`absolute w-[92%] max-w-lg transition-all duration-500 ease-out transform ${
             view === 'result'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto'
-              : 'opacity-0 blur-md scale-95 pointer-events-none'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
+              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
           }`}
         >
-          <div className="backdrop-blur-xl bg-black/75 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+          <div className="backdrop-blur-2xl bg-black/80 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[440px] overflow-y-auto">
             {/* Header / Dismiss */}
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <div className="flex items-baseline gap-2">
@@ -373,7 +389,7 @@ export default function Home() {
             )}
 
             {error && !loading && (
-              <div className="p-4 border border-red-500/40 bg-red-950/20 text-red-200 text-xs font-mono rounded-xl">
+              <div className="p-4 border border-red-500/40 bg-red-950/30 text-red-200 text-xs font-mono rounded-xl">
                 {error}
               </div>
             )}
@@ -424,7 +440,7 @@ export default function Home() {
                         ep.gov.pk <ArrowUpRight className="w-3 h-3" />
                       </a>
                     </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                       {[...result.events].reverse().map((ev, i) => (
                         <div
                           key={i}
@@ -440,7 +456,7 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Add to Daily Tracking action (Hidden if already in list) */}
+                {/* Add to Daily Tracking action */}
                 <div className="pt-2 border-t border-white/10">
                   {isAlreadyTracked(result.trackingNo) ? (
                     <div className="text-xs font-mono text-neutral-400 flex items-center gap-1.5 py-1.5">
@@ -461,15 +477,15 @@ export default function Home() {
           </div>
         </div>
 
-        {/* VIEW C: Daily Tracking Box (Unblurs when scrolled beneath) */}
+        {/* VIEW C: Translucent Glass Daily Tracking Box */}
         <div
-          className={`absolute w-full max-w-md transition-all duration-500 ease-out transform ${
+          className={`absolute w-[90%] max-w-md transition-all duration-500 ease-out transform ${
             view === 'daily'
-              ? 'opacity-100 blur-none scale-100 pointer-events-auto'
-              : 'opacity-0 blur-md scale-95 pointer-events-none'
+              ? 'opacity-100 blur-none scale-100 pointer-events-auto z-10'
+              : 'opacity-0 blur-md scale-95 pointer-events-none z-0'
           }`}
         >
-          <div className="backdrop-blur-xl bg-black/75 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+          <div className="backdrop-blur-2xl bg-black/80 border border-white/20 shadow-2xl rounded-2xl p-6 space-y-4 max-h-[440px] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h2 className="text-xs font-mono uppercase tracking-wider font-bold text-white">
                 Daily Tracking ({trackedParcels.length})
@@ -534,12 +550,12 @@ export default function Home() {
         </div>
       </div>
 
-      {/* 4. Bottom Scroll Indicator */}
-      <div className="absolute bottom-5 left-1/2 transform -translate-x-1/2 z-30">
+      {/* Gentle Scroll Indicator Below Card */}
+      <div className="mt-5 z-30">
         {view === 'search' && (
           <button
             onClick={() => setView('daily')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/40 backdrop-blur-md border border-white/10 transition shadow-md"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/60 backdrop-blur-md border border-white/10 transition shadow-md"
           >
             <span>Daily Tracking ({trackedParcels.length})</span>
             <ArrowDown className="w-3 h-3 animate-bounce" />
@@ -549,7 +565,7 @@ export default function Home() {
         {view === 'daily' && (
           <button
             onClick={() => setView('search')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/40 backdrop-blur-md border border-white/10 transition shadow-md"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/60 backdrop-blur-md border border-white/10 transition shadow-md"
           >
             <ArrowUp className="w-3 h-3" />
             <span>Back to Search</span>
@@ -559,16 +575,16 @@ export default function Home() {
         {view === 'result' && (
           <button
             onClick={() => setView('search')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/40 backdrop-blur-md border border-white/10 transition shadow-md"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-mono uppercase tracking-wider text-neutral-400 hover:text-white bg-black/60 backdrop-blur-md border border-white/10 transition shadow-md"
           >
             <span>Back to Search</span>
           </button>
         )}
       </div>
 
-      {/* 5. Settings Modal */}
+      {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <div className="backdrop-blur-2xl bg-black/85 border border-white/20 w-full max-w-md p-6 space-y-5 rounded-2xl shadow-2xl text-white">
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h2 className="text-xs font-mono font-bold uppercase tracking-wider text-white">
@@ -597,7 +613,7 @@ export default function Home() {
                   value={webhookUrl}
                   onChange={(e) => setWebhookUrl(e.target.value)}
                   placeholder="https://discord.com/api/webhooks/..."
-                  className="flex-1 px-3 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:border-white"
+                  className="flex-1 px-3 py-2 text-xs font-mono bg-black/50 border border-white/20 rounded-xl text-white focus:outline-none focus:border-white"
                 />
                 <button
                   type="button"
