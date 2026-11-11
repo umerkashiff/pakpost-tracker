@@ -40,6 +40,23 @@ export default function Home() {
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Passcode modal state for Add & Delete actions
+  const [authModal, setAuthModal] = useState<{
+    isOpen: boolean;
+    action: 'add' | 'remove';
+    targetId?: string;
+    targetAlias?: string;
+    targetLabel?: string;
+  }>({
+    isOpen: false,
+    action: 'add'
+  });
+  const [modalPasscode, setModalPasscode] = useState('');
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [addFeedback, setAddFeedback] = useState<string | null>(null);
+  const [deleteFeedback, setDeleteFeedback] = useState<string | null>(null);
+
   // Disable right-click and common developer tool hotkeys to discourage casual inspection
   useEffect(() => {
     const handleContextMenu = (e: MouseEvent) => {
@@ -202,6 +219,7 @@ export default function Home() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setAddFeedback(null);
 
     // Blur away search card and unblur result card into view
     setView('result');
@@ -232,77 +250,108 @@ export default function Home() {
     );
   };
 
-  const handleAddToDailyTracking = () => {
+  const handleOpenAddAuth = () => {
     if (!result) return;
-
-    if (!isUnlocked) {
-      setSettingsFeedback('Enter valid passcode in Settings to add parcels.');
-      setView('settings');
-      return;
-    }
-
-    if (!hasWebhookConfigured) {
-      setSettingsFeedback('Set Discord Webhook in settings first.');
-      setView('settings');
-      return;
-    }
-
     const cleanId = activeTrackTarget || result.trackingNo.toUpperCase();
     if (isAlreadyTracked(cleanId)) return;
 
-    const maskedId = censorId(cleanId);
-    const updated = [...trackedParcels, { id: maskedId, label: result.label || undefined }];
-    setTrackedParcels(updated);
-    localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(updated));
-
-    fetch('/api/parcels', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'add',
-        id: cleanId,
-        label: result.label || undefined,
-        passcode
-      })
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.parcels && Array.isArray(data.parcels)) {
-          setTrackedParcels(data.parcels);
-          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(data.parcels));
-        }
-      })
-      .catch(() => {});
+    setModalPasscode('');
+    setModalError(null);
+    setAuthModal({
+      isOpen: true,
+      action: 'add',
+      targetId: cleanId,
+      targetLabel: result.label
+    });
   };
 
-  const handleRemoveFromTracking = (parcel: TrackedItem) => {
-    if (!isUnlocked) {
-      setSettingsFeedback('Enter valid passcode in Settings to delete parcels.');
-      setView('settings');
+  const handleOpenDeleteAuth = (parcel: TrackedItem) => {
+    setModalPasscode('');
+    setModalError(null);
+    setAuthModal({
+      isOpen: true,
+      action: 'remove',
+      targetId: parcel.id,
+      targetAlias: parcel.alias,
+      targetLabel: parcel.label
+    });
+  };
+
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalPasscode.trim()) {
+      setModalError('Passcode is required.');
       return;
     }
 
-    const updated = trackedParcels.filter((p) => p.id !== parcel.id);
-    setTrackedParcels(updated);
-    localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(updated));
+    setModalLoading(true);
+    setModalError(null);
 
-    fetch('/api/parcels', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'remove',
-        alias: parcel.alias || parcel.id,
-        passcode
-      })
-    })
-      .then((r) => r.json())
-      .then((data) => {
+    try {
+      if (authModal.action === 'add') {
+        const res = await fetch('/api/parcels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'add',
+            id: authModal.targetId,
+            label: authModal.targetLabel,
+            passcode: modalPasscode.trim()
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          setModalError(data.error || 'Incorrect passcode. Access denied.');
+          return;
+        }
+
+        // Successfully authorized & added
+        setPasscode(modalPasscode.trim());
+        setIsUnlocked(true);
         if (data.parcels && Array.isArray(data.parcels)) {
           setTrackedParcels(data.parcels);
           localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(data.parcels));
         }
-      })
-      .catch(() => {});
+
+        setAuthModal({ isOpen: false, action: 'add' });
+        setAddFeedback('Added successfully');
+      } else if (authModal.action === 'remove') {
+        const res = await fetch('/api/parcels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'remove',
+            alias: authModal.targetAlias || authModal.targetId,
+            passcode: modalPasscode.trim()
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          setModalError(data.error || 'Incorrect passcode. Access denied.');
+          return;
+        }
+
+        // Successfully authorized & removed
+        setPasscode(modalPasscode.trim());
+        setIsUnlocked(true);
+        if (data.parcels && Array.isArray(data.parcels)) {
+          setTrackedParcels(data.parcels);
+          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(data.parcels));
+        }
+
+        setAuthModal({ isOpen: false, action: 'remove' });
+        setDeleteFeedback('Parcel removed from daily tracking');
+        setTimeout(() => {
+          setDeleteFeedback(null);
+        }, 4000);
+      }
+    } catch {
+      setModalError('Connection failed. Please check network.');
+    } finally {
+      setModalLoading(false);
+    }
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -554,17 +603,27 @@ export default function Home() {
                   </div>
                 )}
 
-                {!isAlreadyTracked(result.trackingNo) && (
-                  <div className="pt-2 border-t border-white/15">
+                <div className="pt-2 border-t border-white/15">
+                  {addFeedback ? (
+                    <div className="w-full py-2.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono uppercase tracking-wider font-bold rounded-xl text-center flex items-center justify-center gap-2 shadow-md">
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>Added successfully</span>
+                    </div>
+                  ) : isAlreadyTracked(result.trackingNo) ? (
+                    <div className="w-full py-2 bg-white/5 border border-white/10 text-white/50 text-[11px] font-mono uppercase tracking-wider rounded-xl text-center flex items-center justify-center gap-1.5">
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>In Daily Tracking</span>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={handleAddToDailyTracking}
-                      className="w-full py-2.5 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md"
+                      onClick={handleOpenAddAuth}
+                      className="w-full py-2.5 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md flex items-center justify-center gap-1.5"
                     >
                       + Add to Daily Tracking
                     </button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -591,6 +650,13 @@ export default function Home() {
                 <ArrowUp className="w-3.5 h-3.5" /> Search
               </button>
             </div>
+
+            {deleteFeedback && (
+              <div className="p-2.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-mono rounded-xl flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{deleteFeedback}</span>
+              </div>
+            )}
 
             {trackedParcels.length === 0 ? (
               <div className="text-xs font-mono text-white/60 py-6 text-center">
@@ -629,9 +695,9 @@ export default function Home() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleRemoveFromTracking(parcel)}
-                        className="text-white/60 hover:text-white transition"
-                        title="Remove from tracking"
+                        onClick={() => handleOpenDeleteAuth(parcel)}
+                        className="text-white/60 hover:text-red-400 transition"
+                        title="Delete from daily tracking"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -769,6 +835,97 @@ export default function Home() {
           </button>
         )}
       </div>
+
+      {/* 5. Passcode Authorization Modal */}
+      {authModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <div className="bg-zinc-950/95 border border-white/20 shadow-[0_24px_60px_rgba(0,0,0,0.9)] rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-white/15 pb-3">
+              <div className="flex items-center gap-2 text-white font-mono text-xs uppercase tracking-wider font-bold">
+                {authModal.action === 'remove' ? (
+                  <Trash2 className="w-4 h-4 text-red-400" />
+                ) : (
+                  <Lock className="w-4 h-4 text-emerald-400" />
+                )}
+                <span>
+                  {authModal.action === 'remove'
+                    ? 'Confirm Deletion'
+                    : 'Authorize Addition'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAuthModal({ ...authModal, isOpen: false })}
+                className="text-white/50 hover:text-white transition p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs font-mono text-white/70">
+              {authModal.action === 'remove'
+                ? `Enter passcode to delete ${authModal.targetId ? censorId(authModal.targetId) : 'parcel'} from daily tracking:`
+                : 'Enter passcode to add this parcel to daily tracking:'}
+            </p>
+
+            <form onSubmit={handleAuthSubmit} className="space-y-3">
+              <div>
+                <input
+                  type="password"
+                  autoFocus
+                  value={modalPasscode}
+                  onChange={(e) => {
+                    setModalPasscode(e.target.value);
+                    setModalError(null);
+                  }}
+                  placeholder="Enter passcode..."
+                  className="w-full px-3.5 py-2.5 text-sm font-mono bg-black/60 border border-white/25 rounded-xl text-white placeholder-white/30 focus:outline-none focus:border-white/50 transition"
+                />
+              </div>
+
+              {modalError && (
+                <div className="p-2.5 bg-red-500/15 border border-red-500/30 text-red-300 text-xs font-mono rounded-xl">
+                  {modalError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setAuthModal({ ...authModal, isOpen: false })}
+                  className="px-3.5 py-2 text-xs font-mono text-white/70 hover:text-white rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={modalLoading || !modalPasscode.trim()}
+                  className={`px-4 py-2 text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md flex items-center gap-1.5 disabled:opacity-50 ${
+                    authModal.action === 'remove'
+                      ? 'bg-red-500 hover:bg-red-600 text-white'
+                      : 'bg-white hover:bg-white/90 text-black'
+                  }`}
+                >
+                  {modalLoading ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : authModal.action === 'remove' ? (
+                    <Trash2 className="w-3.5 h-3.5" />
+                  ) : (
+                    <Check className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {modalLoading
+                      ? 'Verifying...'
+                      : authModal.action === 'remove'
+                        ? 'Delete'
+                        : 'Confirm'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
