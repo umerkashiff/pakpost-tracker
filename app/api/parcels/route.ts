@@ -15,7 +15,8 @@ import { generateAlias } from '@/lib/crypto';
 
 export async function GET(request: NextRequest) {
   const authPasscode = request.nextUrl.searchParams.get('passcode');
-  const isOwner = authPasscode === 'uwu123';
+  const serverPasscode = process.env.SETTINGS_PASSCODE || 'uwu123';
+  const isOwner = authPasscode === serverPasscode;
 
   // For public visitors: return strictly masked IDs and aliases
   // Only with valid passcode are raw IDs ever accessible
@@ -36,11 +37,12 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, id, alias, label, passcode, webhookUrl, schedule } = body;
+    const serverPasscode = process.env.SETTINGS_PASSCODE || 'uwu123';
 
-    // Security check: only passcode "uwu123" can modify tracked items or settings
-    if (passcode !== 'uwu123') {
+    // Security check: only valid passcode can modify tracked items or settings
+    if (passcode !== serverPasscode) {
       return NextResponse.json(
-        { error: 'Unauthorized: Passcode "uwu123" required to modify tracked parcels or settings.' },
+        { error: 'Unauthorized: Valid passcode required to modify tracked parcels or settings.' },
         { status: 403 }
       );
     }

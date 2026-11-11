@@ -32,14 +32,36 @@ export default function Home() {
     return `${id.slice(0, 2)}••••••${id.slice(-2)}`;
   };
 
-  // Settings state (only Schedule & Webhook, locked by passcode "uwu123")
+  // Settings state (only Schedule & Webhook, locked by passcode)
   const [passcode, setPasscode] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(false);
   const [schedule, setSchedule] = useState('0 4 * * *');
   const [webhookUrl, setWebhookUrl] = useState('');
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
 
-  const isUnlocked = passcode === 'uwu123';
+  const handleVerifyPasscode = async (candidate: string) => {
+    setPasscode(candidate);
+    if (!candidate.trim()) {
+      setIsUnlocked(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/auth/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: candidate.trim() })
+      });
+      if (res.ok) {
+        setIsUnlocked(true);
+        setSettingsFeedback('Passcode verified.');
+      } else {
+        setIsUnlocked(false);
+      }
+    } catch {
+      setIsUnlocked(false);
+    }
+  };
 
   // Load initial data
   useEffect(() => {
@@ -183,7 +205,7 @@ export default function Home() {
     if (!result) return;
 
     if (!isUnlocked) {
-      setSettingsFeedback('Unlock settings with passcode "uwu123" to add parcels.');
+      setSettingsFeedback('Enter valid passcode in Settings to add parcels.');
       setView('settings');
       return;
     }
@@ -209,7 +231,7 @@ export default function Home() {
         action: 'add',
         id: cleanId,
         label: result.label || undefined,
-        passcode: 'uwu123'
+        passcode
       })
     })
       .then((r) => r.json())
@@ -224,7 +246,7 @@ export default function Home() {
 
   const handleRemoveFromTracking = (parcel: TrackedItem) => {
     if (!isUnlocked) {
-      setSettingsFeedback('Unlock settings with passcode "uwu123" to delete parcels.');
+      setSettingsFeedback('Enter valid passcode in Settings to delete parcels.');
       setView('settings');
       return;
     }
@@ -239,7 +261,7 @@ export default function Home() {
       body: JSON.stringify({
         action: 'remove',
         alias: parcel.alias || parcel.id,
-        passcode: 'uwu123'
+        passcode
       })
     })
       .then((r) => r.json())
@@ -615,7 +637,7 @@ export default function Home() {
                 id="passcode"
                 type="password"
                 value={passcode}
-                onChange={(e) => setPasscode(e.target.value)}
+                onChange={(e) => handleVerifyPasscode(e.target.value)}
                 placeholder="Enter passcode..."
                 className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
               />

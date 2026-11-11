@@ -71,3 +71,4 @@ export function maskTrackingId(id: string): string {
   if (clean.length <= 4) return '••••';
   return `${clean.slice(0, 2)}••••••${clean.slice(-2)}`;
 }
+
