@@ -1,7 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check, Lock, Unlock } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import {
+  Settings,
+  Trash2,
+  ArrowUpRight,
+  X,
+  ArrowDown,
+  ArrowUp,
+  RefreshCw,
+  Check,
+  Lock,
+  Unlock,
+  ChevronDown,
+  Clock
+} from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
 
@@ -13,6 +26,43 @@ interface TrackedItem {
 
 type ActiveView = 'search' | 'result' | 'daily' | 'settings';
 type SchedulePreset = 'daily' | '12h' | '6h' | '3h' | 'hourly' | 'custom';
+
+const SCHEDULE_OPTIONS: Array<{ value: SchedulePreset; label: string }> = [
+  { value: 'daily', label: 'Daily (PKT)' },
+  { value: '12h', label: 'Every 12 hours' },
+  { value: '6h', label: 'Every 6 hours' },
+  { value: '3h', label: 'Every 3 hours' },
+  { value: 'hourly', label: 'Hourly' },
+  { value: 'custom', label: 'Custom Cron' }
+];
+
+const HOURS_12 = ['12', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11'];
+const MINUTES_5 = ['00', '05', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55'];
+
+function split24HourTime(hhmm: string): { hour12: string; minute: string; period: 'AM' | 'PM' } {
+  const [rawH, rawM] = (hhmm || '09:00').split(':').map(Number);
+  const h24 = Number.isFinite(rawH) ? ((rawH % 24) + 24) % 24 : 9;
+  const minVal = Number.isFinite(rawM) ? Math.min(59, Math.max(0, rawM)) : 0;
+  const period: 'AM' | 'PM' = h24 >= 12 ? 'PM' : 'AM';
+  const h12Num = h24 % 12 === 0 ? 12 : h24 % 12;
+  return {
+    hour12: String(h12Num).padStart(2, '0'),
+    minute: String(minVal).padStart(2, '0'),
+    period
+  };
+}
+
+function join24HourTime(hour12: string, minute: string, period: 'AM' | 'PM'): string {
+  const hNum = Number(hour12) || 12;
+  let h24 = hNum % 12;
+  if (period === 'PM') h24 += 12;
+  return `${String(h24).padStart(2, '0')}:${minute.padStart(2, '0')}`;
+}
+
+function formatTimeLabel(hhmm: string): string {
+  const { hour12, minute, period } = split24HourTime(hhmm);
+  return `${hour12}:${minute} ${period}`;
+}
 
 function parseCronToUi(rawCron: string): { preset: SchedulePreset; time: string } {
   const clean = (rawCron || '').trim().replace(/\s+/g, ' ');
@@ -91,6 +141,9 @@ export default function Home() {
   const [schedule, setSchedule] = useState('0 4 * * *');
   const [schedulePreset, setSchedulePreset] = useState<SchedulePreset>('daily');
   const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [scheduleMenuOpen, setScheduleMenuOpen] = useState(false);
+  const [timeMenuOpen, setTimeMenuOpen] = useState(false);
+  const scheduleContainerRef = useRef<HTMLDivElement | null>(null);
   const [qstashConfigured, setQstashConfigured] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
@@ -112,6 +165,27 @@ export default function Home() {
   const [modalLoading, setModalLoading] = useState(false);
   const [addFeedback, setAddFeedback] = useState<string | null>(null);
   const [deleteFeedback, setDeleteFeedback] = useState<string | null>(null);
+
+  // Close custom schedule popovers when clicking outside or leaving settings
+  useEffect(() => {
+    if (view !== 'settings') {
+      setScheduleMenuOpen(false);
+      setTimeMenuOpen(false);
+      return;
+    }
+
+    const handlePointerDown = (e: MouseEvent) => {
+      if (
+        scheduleContainerRef.current &&
+        !scheduleContainerRef.current.contains(e.target as Node)
+      ) {
+        setScheduleMenuOpen(false);
+        setTimeMenuOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', handlePointerDown);
+    return () => window.removeEventListener('mousedown', handlePointerDown);
+  }, [view]);
 
   // Disable right-click and common developer tool hotkeys to discourage casual inspection
   useEffect(() => {
@@ -839,7 +913,7 @@ export default function Home() {
             </div>
 
             {/* Change Schedule */}
-            <div className="space-y-1.5">
+            <div ref={scheduleContainerRef} className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <label
                   htmlFor="schedulePreset"
@@ -852,55 +926,154 @@ export default function Home() {
                 </span>
               </div>
 
-              <div className="flex items-center gap-2">
-                <select
-                  id="schedulePreset"
-                  disabled={!isUnlocked}
-                  value={schedulePreset}
-                  onChange={(e) => {
-                    const next = e.target.value as SchedulePreset;
-                    setSchedulePreset(next);
-                    setSchedule(buildCronFromUi(next, scheduleTime, schedule, qstashConfigured));
-                  }}
-                  className="flex-1 px-3 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                >
-                  <option value="daily" className="bg-zinc-950 text-white">
-                    Daily (PKT)
-                  </option>
-                  <option value="12h" className="bg-zinc-950 text-white">
-                    Every 12 hours
-                  </option>
-                  <option value="6h" className="bg-zinc-950 text-white">
-                    Every 6 hours
-                  </option>
-                  <option value="3h" className="bg-zinc-950 text-white">
-                    Every 3 hours
-                  </option>
-                  <option value="hourly" className="bg-zinc-950 text-white">
-                    Hourly
-                  </option>
-                  <option value="custom" className="bg-zinc-950 text-white">
-                    Custom Cron
-                  </option>
-                </select>
-
-                {schedulePreset === 'daily' && (
-                  <input
-                    id="scheduleTime"
-                    type="time"
-                    aria-label="Daily check time (PKT)"
+              <div className="flex items-center gap-2 relative">
+                {/* Custom Interval Dropdown */}
+                <div className="relative flex-1">
+                  <button
+                    id="schedulePreset"
+                    type="button"
                     disabled={!isUnlocked}
-                    value={scheduleTime}
-                    onChange={(e) => {
-                      const nextTime = e.target.value || '09:00';
-                      setScheduleTime(nextTime);
-                      setSchedule(
-                        buildCronFromUi('daily', nextTime, schedule, qstashConfigured)
-                      );
+                    onClick={() => {
+                      setTimeMenuOpen(false);
+                      setScheduleMenuOpen((prev) => !prev);
                     }}
-                    className="w-32 px-3 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white [color-scheme:dark] focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
-                  />
-                )}
+                    className="w-full px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white flex items-center justify-between gap-3 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    <span className="truncate">
+                      {SCHEDULE_OPTIONS.find((opt) => opt.value === schedulePreset)?.label ||
+                        'Daily (PKT)'}
+                    </span>
+                    <ChevronDown
+                      className={`w-3.5 h-3.5 text-white/60 shrink-0 transition-transform duration-200 ${
+                        scheduleMenuOpen ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {scheduleMenuOpen && isUnlocked && (
+                    <div className="absolute left-0 right-0 mt-1.5 z-50 bg-zinc-950/95 backdrop-blur-xl border border-white/20 rounded-xl shadow-[0_16px_40px_rgba(0,0,0,0.85)] py-1 overflow-hidden">
+                      {SCHEDULE_OPTIONS.map((opt) => {
+                        const selected = opt.value === schedulePreset;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setSchedulePreset(opt.value);
+                              setSchedule(
+                                buildCronFromUi(opt.value, scheduleTime, schedule, qstashConfigured)
+                              );
+                              setScheduleMenuOpen(false);
+                            }}
+                            className={`w-full px-3.5 py-2 text-left text-xs font-mono flex items-center justify-between transition ${
+                              selected
+                                ? 'bg-white/15 text-white font-semibold'
+                                : 'text-white/75 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            <span>{opt.label}</span>
+                            {selected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Custom Time Selector (PKT) */}
+                {schedulePreset === 'daily' && (() => {
+                  const { hour12, minute, period } = split24HourTime(scheduleTime);
+                  const updateTimePart = (
+                    nextH: string,
+                    nextM: string,
+                    nextP: 'AM' | 'PM'
+                  ) => {
+                    const next24 = join24HourTime(nextH, nextM, nextP);
+                    setScheduleTime(next24);
+                    setSchedule(
+                      buildCronFromUi('daily', next24, schedule, qstashConfigured)
+                    );
+                  };
+
+                  return (
+                    <div className="relative">
+                      <button
+                        id="scheduleTime"
+                        type="button"
+                        aria-label="Daily check time (PKT)"
+                        disabled={!isUnlocked}
+                        onClick={() => {
+                          setScheduleMenuOpen(false);
+                          setTimeMenuOpen((prev) => !prev);
+                        }}
+                        className="w-36 px-3.5 py-2 text-xs font-mono bg-black/40 border border-white/20 rounded-xl text-white flex items-center justify-between gap-2 focus:outline-none focus:border-white/50 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        <span>{formatTimeLabel(scheduleTime)}</span>
+                        <Clock className="w-3.5 h-3.5 text-white/60 shrink-0" />
+                      </button>
+
+                      {timeMenuOpen && isUnlocked && (
+                        <div className="absolute right-0 mt-1.5 z-50 w-52 bg-zinc-950/95 backdrop-blur-xl border border-white/20 rounded-xl shadow-[0_16px_40px_rgba(0,0,0,0.85)] p-2">
+                          <div className="grid grid-cols-3 gap-1.5 text-[11px] font-mono">
+                            {/* Hours */}
+                            <div className="max-h-36 overflow-y-auto space-y-0.5 pr-0.5">
+                              {HOURS_12.map((h) => (
+                                <button
+                                  key={h}
+                                  type="button"
+                                  onClick={() => updateTimePart(h, minute, period)}
+                                  className={`w-full py-1.5 rounded-lg text-center transition ${
+                                    hour12 === h
+                                      ? 'bg-white/90 text-black font-bold'
+                                      : 'text-white/75 hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {h}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Minutes */}
+                            <div className="max-h-36 overflow-y-auto space-y-0.5 border-x border-white/10 px-1">
+                              {MINUTES_5.map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => updateTimePart(hour12, m, period)}
+                                  className={`w-full py-1.5 rounded-lg text-center transition ${
+                                    minute === m
+                                      ? 'bg-white/90 text-black font-bold'
+                                      : 'text-white/75 hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* AM / PM */}
+                            <div className="space-y-1 flex flex-col justify-start">
+                              {(['AM', 'PM'] as const).map((p) => (
+                                <button
+                                  key={p}
+                                  type="button"
+                                  onClick={() => updateTimePart(hour12, minute, p)}
+                                  className={`w-full py-1.5 rounded-lg text-center transition ${
+                                    period === p
+                                      ? 'bg-white/90 text-black font-bold'
+                                      : 'text-white/75 hover:bg-white/10 hover:text-white'
+                                  }`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {schedulePreset === 'custom' && (
