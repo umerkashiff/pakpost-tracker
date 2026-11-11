@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check, Lock, Unlock } from 'lucide-react';
+import { Settings, Trash2, ArrowUpRight, X, ArrowDown, ArrowUp, RefreshCw, Check, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
 
@@ -24,6 +24,12 @@ export default function Home() {
   // Daily tracking list
   const [trackedParcels, setTrackedParcels] = useState<TrackedItem[]>([]);
   const [isServerDiscordSet, setIsServerDiscordSet] = useState(false);
+  const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
+
+  const censorId = (id: string) => {
+    if (id.length <= 4) return '••••';
+    return `${id.slice(0, 2)}••••••${id.slice(-2)}`;
+  };
 
   // Settings state (only Schedule & Webhook, locked by passcode "uwu123")
   const [passcode, setPasscode] = useState('');
@@ -468,46 +474,63 @@ export default function Home() {
               </div>
             ) : (
               <div className="divide-y divide-white/15 border-y border-white/15">
-                {trackedParcels.map((parcel) => (
-                  <div
-                    key={parcel.id}
-                    className="py-3 flex items-center justify-between gap-4 text-xs font-mono"
-                  >
+                {trackedParcels.map((parcel) => {
+                  const isRevealed = Boolean(revealedIds[parcel.id]);
+                  return (
                     <div
-                      onClick={() => {
-                        setTrackingId(parcel.id);
-                        handleTrack(parcel.id);
-                      }}
-                      className="cursor-pointer hover:underline"
+                      key={parcel.id}
+                      className="py-3 flex items-center justify-between gap-4 text-xs font-mono"
                     >
-                      <span className="font-bold text-white">{parcel.id}</span>
-                      {parcel.label && (
-                        <span className="ml-2 text-white/70">({parcel.label})</span>
-                      )}
-                    </div>
+                      <div className="flex items-center gap-2">
+                        <div
+                          onClick={() => {
+                            setTrackingId(parcel.id);
+                            handleTrack(parcel.id);
+                          }}
+                          className="cursor-pointer hover:underline"
+                        >
+                          <span className="font-bold text-white tracking-wider">
+                            {isRevealed ? parcel.id : censorId(parcel.id)}
+                          </span>
+                          {parcel.label && (
+                            <span className="ml-2 text-white/70">({parcel.label})</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRevealedIds((prev) => ({ ...prev, [parcel.id]: !prev[parcel.id] }))
+                          }
+                          className="text-white/40 hover:text-white transition p-0.5"
+                          title={isRevealed ? 'Hide tracking number' : 'Show tracking number'}
+                        >
+                          {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
 
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setTrackingId(parcel.id);
-                          handleTrack(parcel.id);
-                        }}
-                        className="text-white/80 hover:text-white underline text-[11px]"
-                      >
-                        Track
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveFromTracking(parcel.id)}
-                        className="text-white/60 hover:text-white transition"
-                        title="Remove from tracking"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTrackingId(parcel.id);
+                            handleTrack(parcel.id);
+                          }}
+                          className="text-white/80 hover:text-white underline text-[11px]"
+                        >
+                          Track
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFromTracking(parcel.id)}
+                          className="text-white/60 hover:text-white transition"
+                          title="Remove from tracking"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
