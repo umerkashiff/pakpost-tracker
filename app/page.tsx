@@ -55,25 +55,28 @@ export default function Home() {
 
         // Local list is the source of truth once it exists, so deletions persist across reloads.
         const localSaved = localStorage.getItem('pakpost_tracked_parcels');
-        let list: TrackedItem[] | null = null;
+        let localList: TrackedItem[] | null = null;
 
         if (localSaved !== null) {
           try {
             const parsed = JSON.parse(localSaved);
-            if (Array.isArray(parsed)) list = parsed;
+            if (Array.isArray(parsed)) localList = parsed;
           } catch {
             // Ignore parse error
           }
         }
 
-        if (list === null) {
-          list = Array.isArray(data.parcels)
+        let finalList: TrackedItem[];
+        if (localList !== null) {
+          finalList = localList;
+        } else {
+          finalList = Array.isArray(data.parcels)
             ? data.parcels.map((p: TrackedItem) => ({ id: p.id, label: p.label }))
             : [];
-          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(list));
+          localStorage.setItem('pakpost_tracked_parcels', JSON.stringify(finalList));
         }
 
-        setTrackedParcels(list);
+        setTrackedParcels(finalList);
       })
       .catch(() => {});
   }, []);
