@@ -1,96 +1,147 @@
-# 🇵🇰 Pakistan Post Automated Tracker (EMTTS)
+# Pakistan Post Tracker
 
-An automated parcel tracker for **Pakistan Post** that runs **24/7 in the cloud on Vercel** — no need to keep your laptop on or manually visit the website and type tracking IDs. It queries the official Pakistan Post Express Mail Track & Trace System (EMTTS) and dispatches automated **Discord Webhook** notifications daily.
+A small Next.js parcel tracker I built so I do not have to keep checking `ep.gov.pk` and foreign carrier sites by hand every day. It tracks shipments across origin carriers and Pakistan Post EMTTS and sends a Discord ping at 9:00 AM PKT only when something actually moves.
 
-![Pakistan Post Tracker](https://upload.wikimedia.org/wikipedia/en/thumb/d/d4/Pakistan_Post_logo.svg/320px-Pakistan_Post_logo.svg.png)
-
----
-
-## ✨ Features
-
-- ⚡ **No Website Visit Needed**: Automated tracking via Pakistan Post's official EMTTS engine (`ep.gov.pk`).
-- 🤖 **Discord Webhook Notifications**: Rich Discord embeds with status colors, checkpoints history, timestamps, and direct portal links.
-- ⏰ **Daily Automated Checks**: Pre-configured Vercel Cron job (`0 4 * * *` = 09:00 AM PKT / 04:00 UTC) runs without keeping your computer running.
-- 📦 **Multi-Parcel Support**: Track multiple domestic and international packages simultaneously (e.g. `LT...NL`, `EP...PK`, `RR...PK`, UMS).
-- 💻 **Web Dashboard**: Modern, responsive Next.js interface with live timeline visualization, one-click manual tracking, and Discord test triggers.
-- ☁️ **100% Free Cloud Hosting on Vercel**: Deployable in 2 minutes with zero cost.
+Live demo: [pakpost-track.vercel.app](https://pakpost-track.vercel.app)
 
 ---
 
-## 🚀 2-Minute Deployment Guide (Vercel)
+## Why I built this
 
-### Step 1: Push to GitHub
-If you haven't pushed yet:
-```bash
-git remote add origin git@github.com:umerkashiff/pakpost-tracker.git
-git branch -M main
-git push -u origin main
-```
+Checking international mail coming into Pakistan is annoying for two reasons:
 
-### Step 2: Import into Vercel
-1. Go to [vercel.com/new](https://vercel.com/new) and log in.
-2. Select your repository: `umerkashiff/pakpost-tracker`.
-3. Before clicking **Deploy**, open **Environment Variables** and add:
-   - **`DISCORD_WEBHOOK_URL`**: `https://discord.com/api/webhooks/1375514718797824110/4VSkCKl1NxUEhbHbkNKxVZT4OOsU9l1E6LONKBwu_Moe6BP0Pn4YrmN1X7W6lOq1vMv7`
-   - **`TRACKING_IDS`**: `LT880952265NL:Netherlands Shipment` *(or comma-separated for multiple: `ID1:Label1,ID2:Label2`)*
-4. Click **Deploy**!
+1. Pakistan Post EMTTS (`ep.gov.pk`) barely shows anything until the parcel physically lands in Pakistan or gets an EDI scan.
+2. Third-party tracking aggregators scrape different sources on every refresh so you get duplicate checkpoints or broken `N/A` timestamps and if you automate a daily check without diffing it just spams Discord with the exact same status every morning.
 
-That's it! Vercel Cron will now trigger every day at 09:00 AM PKT automatically.
+So I wanted one place where I can type a tracking ID once add it to a daily list behind a passcode and forget about it until Discord pings me.
 
 ---
 
-## ⚙️ Configuration Options
+## Real interactions
 
-You can add or update parcels in two ways:
+### Searching a parcel and browsing checkpoints
+Typing a sample ID like `CP123456789PK` runs a live lookup against Pakistan Post and renders the checkpoint timeline inside the frosted card with smooth wheel scrolling.
 
-### Option A: `parcels.json` (Recommended for Git tracking)
-Edit `parcels.json` directly in the repository:
-```json
-[
-  {
-    "id": "LT880952265NL",
-    "label": "Netherlands Shipment",
-    "enabled": true
-  },
-  {
-    "id": "EP123456789PK",
-    "label": "Karachi Express",
-    "enabled": true
-  }
-]
-```
+![Tracking search and timeline demo](docs/track-demo.gif)
 
-### Option B: Environment Variable `TRACKING_IDS`
-In your Vercel Project Settings > Environment Variables:
-```env
-TRACKING_IDS=LT880952265NL:Netherlands Shipment,EP123456789PK:Islamabad Doc
+### Daily list privacy and passcode protection
+Saved parcels show up masked (`LT••••••NL`) using HMAC aliases so public visitors never see real tracking numbers. Adding deleting or opening cron and webhook settings requires an owner passcode.
+
+![Daily list passcode modal and settings demo](docs/settings-demo.gif)
+
+---
+
+## How it decides where to check
+
+Instead of firing requests at four scrapers at once and taking whichever responds first `lib/upstream.ts` routes by tracking prefix and merges upstream scans with Pakistan Post EMTTS inside `lib/pakpost.ts`. Undated `N/A` entries and duplicate same-day EDI lines get dropped before sorting by PKT time.
+
+```mermaid
+flowchart TD
+    A["Input Tracking ID or Alias"] --> B{"Check Country Suffix / Prefix"}
+    B -->|"*PK (Domestic)"| C["Pakistan Post EMTTS Only"]
+    B -->|"*CN or LP*"| D["Cainiao Direct API"]
+    D -->|"No events"| E["UPU Scraper Fallback"]
+    B -->|"*NL"| F["UPU Scraper (PostNL / Spring GDS)"]
+    F -->|"Rate-limited or < 4 events"| G["PostNL Consumer Observations (No PII)"]
+    B -->|"Other International"| H["UPU Scraper"]
+    H -->|"Empty"| I["ParcelsApp Fallback"]
+
+    C --> J["Pakistan Post EMTTS Fetch"]
+    E --> J
+    G --> J
+    I --> J
+    D --> J
+    F --> J
+    H --> J
+
+    J --> K["mergeAndDeduplicateEvents() (Drop N/A & Same-Day EDI Dupes)"]
+    K --> L["Cache Upstream 15m in Redis + Return Clean Timeline"]
 ```
 
 ---
 
-## 📡 API Endpoints
+## Daily Discord alerts (change-only)
 
-| Endpoint | Method | Description |
+Vercel Cron triggers `/api/cron` every day at `04:00 UTC` (`09:00 AM PKT` via `vercel.json`). It bypasses the 15-minute cache fetches fresh scans builds a state signature and compares it against the last saved signature in Upstash Redis.
+
+```mermaid
+sequenceDiagram
+    participant Cron as Vercel Cron (9:00 AM PKT)
+    participant API as /api/cron
+    participant Tracker as Upstream + EMTTS
+    participant Redis as Upstash Redis
+    participant Discord as Discord Webhook
+
+    Cron->>API: Trigger GET /api/cron
+    API->>Redis: Load AES-256 encrypted parcel list
+    loop Each saved parcel
+        API->>Tracker: Fetch live status (bypassCache = true)
+        Tracker-->>API: Merged events + statusCategory
+        API->>Redis: Compare computeTrackingSignature() vs last hash
+        alt Signature unchanged
+            API-->>API: Skip alert
+        else New checkpoint or status change
+            API->>Redis: Save new signature hash
+            API->>Discord: Post embed + top-level user ping
+        end
+    end
+```
+
+---
+
+## Privacy and storage
+
+- Tracking IDs webhook URL and cron schedule are encrypted with `AES-256-GCM` (`lib/crypto.ts`) before being stored in Upstash Redis.
+- Public API calls receive masked IDs (`LT••••••NL`) and 16-char HMAC-SHA256 aliases instead of raw tracking numbers.
+- Owner actions (`add` `remove` `settings`) check `SETTINGS_PASSCODE` server-side through `/api/auth/verify` and `/api/parcels`.
+- When hitting PostNL's consumer endpoint as a 429 fallback only observation dates and status text are read so recipient address fields never leave the origin response.
+
+---
+
+## API routes
+
+| Route | Method | What it does |
 |---|---|---|
-| `/api/cron` | `GET`, `POST` | The automated job invoked by Vercel Cron. Checks all parcels and posts embeds to Discord. |
-| `/api/track?id=LT880952265NL` | `GET` | Fetches live tracking data for any tracking number in JSON format. |
-| `/api/notify-test` | `POST` | Dispatches an instant test embed to verify Discord Webhook connectivity. |
-| `/api/parcels` | `GET` | Returns list of currently scheduled parcels. |
+| `/api/track` | `GET`, `POST` | Tracks by raw `id` or opaque `alias` and masks responses for saved parcels |
+| `/api/parcels` | `GET`, `POST` | Returns masked public parcels or modifies tracked items and settings with passcode |
+| `/api/cron` | `GET`, `POST` | Runs daily check with diff detection and posts Discord updates |
+| `/api/notify-test` | `POST` | Sends a test Discord embed with user mention |
+| `/api/auth/verify` | `POST` | Checks owner passcode before editing |
 
 ---
 
-## 🛠️ Local Development
+## Setup and deployment
+
+### 1. Environment variables
+
+Copy `.env.example` to `.env.local` for local runs or add these in your Vercel project settings:
+
+```env
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/WEBHOOK_ID/WEBHOOK_TOKEN
+DISCORD_PING_USER_ID=YOUR_DISCORD_USER_ID
+TRACKING_IDS=CP123456789PK:Sample Parcel
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=your_upstash_token
+ENCRYPTION_KEY=random_32_byte_secret
+SETTINGS_PASSCODE=your_owner_passcode
+CRON_SECRET=optional_cron_secret
+```
+
+### 2. Run locally
 
 ```bash
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+Open `http://localhost:3000`.
+
+### 3. Deploy to Vercel
+
+Push to GitHub and import the repo into Vercel with the environment variables above. `vercel.json` handles the daily `0 4 * * *` cron job automatically.
 
 ---
 
-## 🛡️ License
+## License
+
 MIT
