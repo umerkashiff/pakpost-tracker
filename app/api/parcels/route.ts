@@ -12,7 +12,8 @@ import {
   verifyOwnerPasscode,
   saveOwnerPasscode,
   getQStashScheduleId,
-  saveQStashScheduleId
+  saveQStashScheduleId,
+  clearParcelTrackingState
 } from '@/lib/config';
 import { generateAlias } from '@/lib/crypto';
 import {
@@ -149,7 +150,8 @@ export async function POST(request: NextRequest) {
         (p) => generateAlias(p.id) === targetIdentifier || p.id.toUpperCase() === targetIdentifier.toUpperCase()
       );
       if (index !== -1) {
-        parcels.splice(index, 1);
+        const [removed] = parcels.splice(index, 1);
+        await clearParcelTrackingState(removed.id);
       }
     }
 

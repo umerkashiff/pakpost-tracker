@@ -11,6 +11,44 @@ export type StatusCategory = 'DELIVERED' | 'IN_TRANSIT' | 'BOOKED' | 'ATTEMPT_FA
 
 export type HandoffStatus = 'UPSTREAM_TRANSIT' | 'HANDED_OFF_DOMESTIC' | 'DOMESTIC_ONLY';
 
+export type UpstreamProviderRoute =
+  | 'domestic-emtts'
+  | 'cainiao-direct'
+  | 'spring-gds'
+  | 'postnl-consumer'
+  | 'direct-upu'
+  | 'parcelsapp';
+
+export interface ParcelRouteProfile {
+  carrierId: string;
+  carrierName: string;
+  upstreamRoute: UpstreamProviderRoute;
+  originCountry?: string;
+  countryCode?: string;
+  pinnedAt: string;
+}
+
+export interface ParcelSourceSnapshot {
+  emttsEvents: TrackingEvent[];
+  emttsOrigin?: string;
+  emttsDestination?: string;
+  emttsUpdatedAt?: string;
+  upstreamEvents: TrackingEvent[];
+  upstreamCarrierId?: string;
+  upstreamCarrierName?: string;
+  upstreamOriginCountry?: string;
+  upstreamRoute?: UpstreamProviderRoute;
+  upstreamUpdatedAt?: string;
+}
+
+export interface ParcelAlertState {
+  highestTimestamp: number;
+  lastStatusCategory: StatusCategory;
+  seenCheckpoints: string[];
+  signature: string;
+  updatedAt: string;
+}
+
 export interface TrackingResult {
   trackingNo: string;
   label?: string;
@@ -25,6 +63,13 @@ export interface TrackingResult {
   upstreamCarrier?: string;
   handoffStatus?: HandoffStatus;
   isUpdated?: boolean;
+  routeProfile?: ParcelRouteProfile;
+  sourceHealth?: {
+    emttsOk: boolean;
+    upstreamOk: boolean;
+    usedCachedEmtts?: boolean;
+    usedCachedUpstream?: boolean;
+  };
   error?: string;
 }
 

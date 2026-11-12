@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getTrackedParcels,
-  computeTrackingSignature,
   getLastParcelSignature,
-  saveLastParcelSignature
+  getParcelAlertState,
+  saveParcelAlertState,
+  evaluateParcelProgression
 } from '@/lib/config';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
 import { sendDiscordNotification } from '@/lib/discord';
@@ -51,15 +52,21 @@ async function handleCheck(request: NextRequest) {
     const result = await fetchPakistanPostTracking(parcel.id, parcel.label, { bypassCache: true });
     results.push(result);
 
-    const currentSig = computeTrackingSignature(result);
-    const lastSig = await getLastParcelSignature(parcel.id);
+    const [prevState, legacySig] = await Promise.all([
+      getParcelAlertState(parcel.id),
+      getLastParcelSignature(parcel.id)
+    ]);
 
-    const isChanged = forcePush || !lastSig || lastSig !== currentSig;
+    const progression = evaluateParcelProgression(result, prevState, legacySig);
+    const isChanged = forcePush || progression.shouldAlert;
+
     if (isChanged) {
       result.isUpdated = true;
       changedResults.push(result);
-      // Persist the updated signature so future runs only trigger on new events
-      await saveLastParcelSignature(parcel.id, currentSig);
+    }
+
+    if (progression.nextState && (progression.stateDirty || forcePush)) {
+      await saveParcelAlertState(parcel.id, progression.nextState);
     }
 
     // 500ms delay between consecutive queries

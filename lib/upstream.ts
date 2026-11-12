@@ -1,6 +1,7 @@
-import { TrackingEvent, StatusCategory } from './types';
-import { createTracker } from 'universal-parcel-scraper/node';
+import { TrackingEvent, StatusCategory, ParcelRouteProfile, UpstreamProviderRoute } from './types';
+import { createTracker, type Tracker } from 'universal-parcel-scraper/node';
 import { getRedis } from './redis';
+import { getParcelRoute, saveParcelRoute } from './config';
 
 // Friendly carrier name map
 const CARRIER_NAMES: Record<string, string> = {
@@ -21,7 +22,50 @@ const CARRIER_NAMES: Record<string, string> = {
   'hongkong-post': 'Hong Kong Post',
   'malaysia-post': 'Pos Malaysia',
   'canada-post': 'Canada Post',
-  'australia-post': 'Australia Post'
+  'australia-post': 'Australia Post',
+  'la-poste': 'La Poste (France)',
+  'poste-italiane': 'Poste Italiane',
+  'correos-spain': 'Correos Spain',
+  'postnord': 'PostNord',
+  'swiss-post': 'Swiss Post',
+  'singapore-post': 'Singapore Post (SingPost)',
+  'pos-malaysia': 'Pos Malaysia',
+  'ptt': 'PTT Turkish Post',
+  'saudi-post': 'Saudi Post (SPL)',
+  'thailand-post': 'Thailand Post',
+  'korea-post': 'Korea Post',
+  'india-post': 'India Post',
+  'bangladesh-post': 'Bangladesh Post',
+  'sri-lanka-post': 'Sri Lanka Post'
+};
+
+// Deterministic ISO S10 country suffix -> universal-parcel-scraper carrier adapter ID
+const S10_CARRIER_MAP: Record<string, string> = {
+  NL: 'spring-gds',
+  GB: 'royal-mail',
+  DE: 'deutsche-post',
+  FR: 'la-poste',
+  IT: 'poste-italiane',
+  ES: 'correos-spain',
+  CH: 'swiss-post',
+  SE: 'postnord',
+  DK: 'postnord',
+  SG: 'singapore-post',
+  US: 'usps',
+  CN: 'china-post',
+  HK: 'hongkong-post',
+  JP: 'japan-post',
+  MY: 'pos-malaysia',
+  CA: 'canada-post',
+  AU: 'australia-post',
+  AE: 'emirates-post',
+  SA: 'saudi-post',
+  TR: 'ptt',
+  TH: 'thailand-post',
+  KR: 'korea-post',
+  IN: 'india-post',
+  BD: 'bangladesh-post',
+  LK: 'sri-lanka-post'
 };
 
 // ISO country suffix to origin country name
@@ -54,9 +98,27 @@ export interface UpstreamTrackingResult {
   carrierId: string;
   carrierName: string;
   originCountry: string;
+  upstreamRoute: UpstreamProviderRoute;
   events: TrackingEvent[];
   latestEvent: TrackingEvent | null;
   statusCategory: StatusCategory;
+}
+
+// Module-scoped singleton trackers preserve carrier session state (e.g. PostNL visitor token)
+let directTrackerSingleton: Tracker | null = null;
+let fallbackTrackerSingleton: Tracker | null = null;
+
+function getTrackerForProvider(provider: 'UPU' | 'ParcelsApp'): Tracker {
+  if (provider === 'ParcelsApp') {
+    if (!fallbackTrackerSingleton) {
+      fallbackTrackerSingleton = createTracker({ providers: ['ParcelsApp'] });
+    }
+    return fallbackTrackerSingleton;
+  }
+  if (!directTrackerSingleton) {
+    directTrackerSingleton = createTracker({ providers: ['UPU'] });
+  }
+  return directTrackerSingleton;
 }
 
 /**
@@ -178,6 +240,7 @@ async function fetchPostNLConsumerObservations(trackingNo: string): Promise<Upst
       carrierId: 'spring-gds',
       carrierName: 'PostNL (Spring GDS)',
       originCountry: 'Netherlands',
+      upstreamRoute: 'postnl-consumer',
       events,
       latestEvent: latest,
       statusCategory: mapStageToCategory(undefined, latest?.status)
@@ -193,7 +256,7 @@ async function fetchPostNLConsumerObservations(trackingNo: string): Promise<Upst
 async function fetchCainiaoDirect(trackingNo: string): Promise<UpstreamTrackingResult | null> {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const res = await fetch(
       `https://global.cainiao.com/global/detail.json?mailNos=${encodeURIComponent(trackingNo)}&lang=en-US`,
@@ -238,6 +301,7 @@ async function fetchCainiaoDirect(trackingNo: string): Promise<UpstreamTrackingR
         carrierId: 'cainiao',
         carrierName: 'Cainiao Global (AliExpress)',
         originCountry: 'China',
+        upstreamRoute: 'cainiao-direct',
         events,
         latestEvent: latest,
         statusCategory: mapStageToCategory(undefined, latest?.status)
@@ -250,41 +314,77 @@ async function fetchCainiaoDirect(trackingNo: string): Promise<UpstreamTrackingR
 }
 
 /**
- * Query a deterministic carrier adapter via universal-parcel-scraper
- * (Defaulting to direct carrier adapter + UPU only; avoiding random 3rd-party flapping)
+ * Query a deterministic carrier adapter via a shared singleton universal-parcel-scraper instance.
+ * Reusing the tracker preserves PostNL visitor tokens and skips 10s recognition when carrier is explicit.
  */
 async function queryUniversalScraper(
   cleanId: string,
   originCountry: string,
   countryCode: string | undefined,
-  providers: ('UPU' | 'ParcelsApp')[]
+  options: {
+    provider: 'UPU' | 'ParcelsApp';
+    carrier?: string;
+    budgetMs?: number;
+    upstreamRoute?: UpstreamProviderRoute;
+  }
 ): Promise<UpstreamTrackingResult | null> {
-  try {
-    const tracker = createTracker({ providers });
+  const budgetMs = options.budgetMs ?? (options.provider === 'ParcelsApp' ? 20000 : 18000);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), budgetMs + 1000);
 
-    const trackPromise = tracker.track({ number: cleanId });
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Upstream carrier timeout')), 9000)
+  try {
+    const tracker = getTrackerForProvider(options.provider);
+    const detected = !options.carrier ? tracker.detect(cleanId) : null;
+    const explicitCarrier =
+      options.carrier ||
+      (detected && detected.confidence === 'high' && detected.carrier !== 'unknown'
+        ? detected.carrier
+        : undefined);
+
+    const scrapeResult = await tracker.track(
+      {
+        number: cleanId,
+        ...(explicitCarrier ? { carrier: explicitCarrier } : {})
+      },
+      {
+        signal: controller.signal,
+        budgetMs
+      }
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scrapeResult = (await Promise.race([trackPromise, timeoutPromise])) as any;
-
-    if (scrapeResult && scrapeResult.result && Array.isArray(scrapeResult.result.events) && scrapeResult.result.events.length > 0) {
-      const carrierId = scrapeResult.carrier || (countryCode === 'NL' ? 'spring-gds' : 'upstream');
+    if (
+      scrapeResult &&
+      scrapeResult.result &&
+      Array.isArray(scrapeResult.result.events) &&
+      scrapeResult.result.events.length > 0
+    ) {
+      const carrierId =
+        scrapeResult.carrier && scrapeResult.carrier !== 'unknown'
+          ? scrapeResult.carrier
+          : explicitCarrier || (countryCode === 'NL' ? 'spring-gds' : 'upstream');
       const carrierName = CARRIER_NAMES[carrierId] || scrapeResult.carrier || `${originCountry} Post`;
 
       const events: TrackingEvent[] = [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const ev of scrapeResult.result.events) {
-        const rawTime = ev.time || ev.instant || ev.local_time || ev.provider_time_text;
+        const rawEvent = ev as Record<string, unknown>;
+        const rawTime = [rawEvent.time, rawEvent.instant, rawEvent.local_time, rawEvent.provider_time_text].find(
+          (val): val is string => typeof val === 'string' && val.trim().length > 0
+        );
         const { date, time, timestamp } = parseTimestamp(rawTime);
         if (timestamp > 0 && date) {
+          const location =
+            typeof rawEvent.location === 'string' && rawEvent.location.trim()
+              ? rawEvent.location.trim()
+              : originCountry;
+          const status =
+            (typeof rawEvent.description === 'string' && rawEvent.description.trim()) ||
+            (typeof rawEvent.stage === 'string' && rawEvent.stage.trim()) ||
+            'In Transit';
           events.push({
             date,
             time,
-            location: ev.location || originCountry,
-            status: ev.description || ev.stage || 'In Transit',
+            location,
+            status,
             carrier: carrierName,
             timestamp
           });
@@ -295,29 +395,43 @@ async function queryUniversalScraper(
 
       events.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
       const latest = events[events.length - 1] || null;
+      const inferredRoute: UpstreamProviderRoute =
+        options.upstreamRoute ||
+        (carrierId === 'spring-gds'
+          ? 'spring-gds'
+          : options.provider === 'ParcelsApp'
+            ? 'parcelsapp'
+            : 'direct-upu');
 
       return {
         found: true,
         carrierId,
         carrierName,
         originCountry,
+        upstreamRoute: inferredRoute,
         events,
         latestEvent: latest,
-        statusCategory: mapStageToCategory(scrapeResult.result.current_stage || scrapeResult.result.status, latest?.status)
+        statusCategory: mapStageToCategory(
+          scrapeResult.result.current_stage || scrapeResult.result.status,
+          latest?.status
+        )
       };
     }
   } catch {
     // fallback handled by caller
+  } finally {
+    clearTimeout(timeoutId);
   }
   return null;
 }
 
 /**
- * Deterministic Upstream Tracking Waterfall:
+ * Deterministic Upstream Tracking Waterfall with Redis Route Pinning:
  * 1. Domestic (*PK) -> Skip upstream completely (EMTTS only)
- * 2. China / AliExpress (*CN / LP*) -> Cainiao Direct -> Direct/UPU adapter
- * 3. Netherlands (*NL) -> PostNL/Spring-GDS Direct -> PostNL Consumer API (no random flapping)
- * 4. Other International -> Direct Origin Carrier Adapter (+ UPU) -> ParcelsApp fallback only if empty
+ * 2. Check pinned canonical route for this parcel so repeated lookups never jump providers randomly
+ * 3. China / AliExpress (*CN / LP*) -> Cainiao Direct -> China Post Direct/UPU
+ * 4. Netherlands (*NL) -> Spring GDS / PostNL (explicit carrier) -> PostNL Consumer fallback only if unreachable
+ * 5. Other International -> Mapped Origin Carrier / High-Confidence Detector -> ParcelsApp fallback only if empty
  */
 export async function fetchUpstreamTracking(
   rawId: string,
@@ -325,12 +439,11 @@ export async function fetchUpstreamTracking(
 ): Promise<UpstreamTrackingResult | null> {
   const cleanId = rawId.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!cleanId || cleanId.endsWith('PK')) {
-    // Pure domestic Pakistan Post parcel
     return null;
   }
 
-  // Check Redis cache (15 min TTL) for consistent manifest delivery & zero 429 rate-limits
-  const cacheKey = `pakpost:cache:v3:upstream:${cleanId}`;
+  // Check short-lived Redis cache (15 min TTL) unless bypassed by cron/explicit refresh
+  const cacheKey = `pakpost:cache:v4:upstream:${cleanId}`;
   const redis = getRedis();
   if (redis && !options?.bypassCache) {
     try {
@@ -347,51 +460,91 @@ export async function fetchUpstreamTracking(
   const isS10 = /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(cleanId);
   const countryCode = isS10 ? cleanId.slice(-2) : undefined;
   const originCountry = countryCode ? (COUNTRY_NAMES[countryCode] || countryCode) : 'International';
+  const mappedS10Carrier = countryCode ? S10_CARRIER_MAP[countryCode] : undefined;
 
+  const pinned = await getParcelRoute(cleanId);
   let result: UpstreamTrackingResult | null = null;
 
   if (countryCode === 'CN' || cleanId.startsWith('LP')) {
-    // Stream 1: China / AliExpress -> Official Cainiao endpoint first
-    result = await fetchCainiaoDirect(cleanId);
+    // Stream 1: China / AliExpress -> Official Cainiao first, or pinned direct-upu
+    if (pinned?.upstreamRoute === 'direct-upu') {
+      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
+        provider: 'UPU',
+        carrier: pinned.carrierId !== 'upstream' ? pinned.carrierId : 'china-post',
+        upstreamRoute: 'direct-upu'
+      });
+    }
     if (!result) {
-      result = await queryUniversalScraper(cleanId, originCountry, countryCode, ['UPU']);
+      result = await fetchCainiaoDirect(cleanId);
+    }
+    if (!result) {
+      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
+        provider: 'UPU',
+        carrier: mappedS10Carrier || 'china-post',
+        upstreamRoute: 'direct-upu'
+      });
     }
   } else if (countryCode === 'NL') {
-    // Stream 2: Netherlands -> Direct Spring GDS / PostNL adapter first
-    const directRes = await queryUniversalScraper(cleanId, originCountry, countryCode, ['UPU']);
-    // If direct Spring GDS worked fully (> 3 events), use it cleanly
-    if (directRes && directRes.events.length > 3) {
-      result = directRes;
-    } else {
-      // Otherwise fallback deterministically to PostNL's official consumer observations API
-      const consumerRes = await fetchPostNLConsumerObservations(cleanId);
-      if (consumerRes && consumerRes.events.length > 0) {
-        const merged = [...(directRes?.events || []), ...consumerRes.events];
-        merged.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        result = {
-          ...consumerRes,
-          events: merged,
-          latestEvent: merged[merged.length - 1] || consumerRes.latestEvent
-        };
-      } else {
-        result = directRes;
-      }
-    }
-  } else {
-    // Stream 3: Other global postal networks (SG, US, GB, DE, AE, TR, etc.)
-    // Use Direct Origin Carrier + UPU first; only fall back to ParcelsApp if completely empty
-    result = await queryUniversalScraper(cleanId, originCountry, countryCode, ['UPU']);
+    // Stream 2: Netherlands -> Always try authoritative Spring GDS / PostNL first with explicit carrier
+    result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
+      provider: 'UPU',
+      carrier: 'spring-gds',
+      budgetMs: 18000,
+      upstreamRoute: 'spring-gds'
+    });
+    // Ephemeral fallback only when Spring GDS completely fails/timeouts (never overwrite spring-gds pin)
     if (!result) {
-      result = await queryUniversalScraper(cleanId, originCountry, countryCode, ['ParcelsApp']);
+      result = await fetchPostNLConsumerObservations(cleanId);
+    }
+  } else if (pinned && pinned.upstreamRoute !== 'postnl-consumer') {
+    // Follow pinned canonical route deterministically for non-CN/NL parcels
+    const pinnedProvider = pinned.upstreamRoute === 'parcelsapp' ? 'ParcelsApp' : 'UPU';
+    result = await queryUniversalScraper(cleanId, pinned.originCountry || originCountry, countryCode, {
+      provider: pinnedProvider,
+      carrier: pinned.carrierId && pinned.carrierId !== 'upstream' ? pinned.carrierId : mappedS10Carrier,
+      upstreamRoute: pinned.upstreamRoute
+    });
+  } else {
+    // Stream 3: Other global postal & express carriers (USPS, Royal Mail, DHL, UPS, FedEx, etc.)
+    result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
+      provider: 'UPU',
+      carrier: mappedS10Carrier,
+      budgetMs: 18000,
+      upstreamRoute: 'direct-upu'
+    });
+    if (!result) {
+      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
+        provider: 'ParcelsApp',
+        carrier: mappedS10Carrier,
+        budgetMs: 20000,
+        upstreamRoute: 'parcelsapp'
+      });
     }
   }
 
-  // Persist authoritative manifest in Redis for 15 minutes
-  if (result && result.found && result.events.length > 0 && redis) {
-    try {
-      await redis.set(cacheKey, result, { ex: 900 });
-    } catch {
-      // ignore cache write failure
+  // Persist route pin for non-degraded canonical routes + short-lived cache
+  if (result && result.found && result.events.length > 0) {
+    if (
+      result.upstreamRoute !== 'postnl-consumer' &&
+      (!pinned || pinned.upstreamRoute === 'postnl-consumer' || pinned.upstreamRoute !== result.upstreamRoute)
+    ) {
+      const profile: ParcelRouteProfile = {
+        carrierId: result.carrierId,
+        carrierName: result.carrierName,
+        upstreamRoute: result.upstreamRoute,
+        originCountry: result.originCountry,
+        countryCode,
+        pinnedAt: new Date().toISOString()
+      };
+      await saveParcelRoute(cleanId, profile);
+    }
+
+    if (redis) {
+      try {
+        await redis.set(cacheKey, result, { ex: 900 });
+      } catch {
+        // ignore cache write failure
+      }
     }
   }
 
