@@ -51,6 +51,7 @@ export interface ParcelAlertState {
 
 export interface TrackingResult {
   trackingNo: string;
+  alias?: string;
   label?: string;
   origin: string;
   destination: string;

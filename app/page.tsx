@@ -819,7 +819,7 @@ export default function Home() {
 
                 <div className="pt-2 border-t border-white/15 flex items-center gap-2">
                   <a
-                    href={`/api/certificate?id=${encodeURIComponent(result.trackingNo)}&format=print`}
+                    href={`/api/certificate?${result.alias ? `alias=${encodeURIComponent(result.alias)}` : `id=${encodeURIComponent(activeTrackTarget || result.trackingNo)}`}&format=print`}
                     target="_blank"
                     rel="noreferrer"
                     className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white text-[11px] font-mono uppercase tracking-wider rounded-xl transition flex items-center gap-1.5"

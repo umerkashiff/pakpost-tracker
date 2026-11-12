@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
 import { getParcelByAliasOrId, getTrackedParcels, checkRateLimit } from '@/lib/config';
-import { maskTrackingId } from '@/lib/crypto';
+import { maskTrackingId, generateAlias } from '@/lib/crypto';
 import { TrackingResult } from '@/lib/types';
 
 function getClientIp(request: NextRequest): string {
@@ -12,7 +12,12 @@ function getClientIp(request: NextRequest): string {
   return request.headers.get('x-real-ip')?.trim() || 'unknown';
 }
 
-function sanitizeResult(result: TrackingResult, realId: string, isTrackedParcel: boolean): TrackingResult {
+function sanitizeResult(
+  result: TrackingResult,
+  realId: string,
+  isTrackedParcel: boolean,
+  alias?: string
+): TrackingResult {
   if (!isTrackedParcel) return result;
 
   const masked = maskTrackingId(realId);
@@ -29,6 +34,7 @@ function sanitizeResult(result: TrackingResult, realId: string, isTrackedParcel:
   return {
     ...result,
     trackingNo: masked,
+    alias,
     latestEvent: sanitizedLatest,
     events: result.events.map((ev) => ({
       ...ev,
@@ -91,6 +97,7 @@ async function resolveAndTrack(
   let targetId = (params.id || '').trim().toUpperCase();
   let targetLabel = params.label;
   let isTracked = false;
+  let activeAlias: string | undefined;
 
   if (params.alias) {
     const parcel = await getParcelByAliasOrId(params.alias);
@@ -98,6 +105,7 @@ async function resolveAndTrack(
       targetId = parcel.id;
       targetLabel = parcel.label || targetLabel;
       isTracked = true;
+      activeAlias = params.alias.trim();
     }
   }
 
@@ -115,11 +123,19 @@ async function resolveAndTrack(
     fetchPakistanPostTracking(targetId, targetLabel, { bypassCache: isRefresh })
   ]);
 
-  if (!isTracked && allTracked?.some((p) => p.id.toUpperCase() === targetId)) {
-    isTracked = true;
+  if (!isTracked && allTracked) {
+    const matched = allTracked.find((p) => p.id.toUpperCase() === targetId);
+    if (matched) {
+      isTracked = true;
+      activeAlias = generateAlias(matched.id);
+    }
   }
 
-  return { status: 200, body: sanitizeResult(rawResult, targetId, isTracked), headers: rateHeaders };
+  return {
+    status: 200,
+    body: sanitizeResult(rawResult, targetId, isTracked, activeAlias),
+    headers: rateHeaders
+  };
 }
 
 export async function GET(request: NextRequest) {

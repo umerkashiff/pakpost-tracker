@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
-import { getParcelByAliasOrId } from '@/lib/config';
+import { getParcelByAliasOrId, getTrackedParcels } from '@/lib/config';
+import { maskTrackingId } from '@/lib/crypto';
 import { generateAuditCertificate } from '@/lib/certificate';
 
 export async function GET(request: NextRequest) {
@@ -10,19 +11,36 @@ export async function GET(request: NextRequest) {
   const format = searchParams.get('format') || 'json';
 
   let targetId = (id || '').trim().toUpperCase();
+  let isTracked = false;
 
   if (alias) {
     const parcel = await getParcelByAliasOrId(alias);
     if (parcel) {
       targetId = parcel.id;
+      isTracked = true;
     }
   }
 
-  if (!targetId) {
+  // If passed id looks like an alias (16 hex chars) or masked id
+  if (!targetId || targetId.includes('•') || targetId.includes('*')) {
+    if (alias) {
+      const parcel = await getParcelByAliasOrId(alias);
+      if (parcel) targetId = parcel.id;
+    }
+  }
+
+  if (!targetId || targetId.includes('•') || targetId.includes('*')) {
     return NextResponse.json(
-      { error: 'Tracking ID or alias is required' },
+      { error: 'Valid tracking ID or secure alias is required' },
       { status: 400 }
     );
+  }
+
+  if (!isTracked) {
+    const allTracked = await getTrackedParcels();
+    if (allTracked.some((p) => p.id.toUpperCase() === targetId)) {
+      isTracked = true;
+    }
   }
 
   const rawResult = await fetchPakistanPostTracking(targetId);
@@ -34,6 +52,11 @@ export async function GET(request: NextRequest) {
   }
 
   const cert = generateAuditCertificate(rawResult);
+
+  // If this parcel is from the private tracked list, protect privacy by masking in the public certificate
+  if (isTracked) {
+    cert.trackingNo = maskTrackingId(targetId);
+  }
 
   if (format === 'html' || format === 'print') {
     const html = `<!DOCTYPE html>
@@ -124,3 +147,4 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(cert, { status: 200 });
 }
+
