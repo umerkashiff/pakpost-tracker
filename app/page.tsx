@@ -944,7 +944,7 @@ export default function Home() {
                 aria-hidden={settingsTab !== 'config'}
                 className={`space-y-4 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
                   settingsTab === 'config'
-                    ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                    ? 'relative opacity-100 blur-0 scale-100 translate-y-0'
                     : 'absolute inset-x-0 top-0 opacity-0 blur-2xl scale-90 -translate-y-4 pointer-events-none'
                 }`}
               >
@@ -1211,7 +1211,7 @@ export default function Home() {
                   aria-hidden={settingsTab !== 'api'}
                   className={`space-y-3 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
                     settingsTab === 'api'
-                      ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                      ? 'relative opacity-100 blur-0 scale-100 translate-y-0'
                       : 'absolute inset-x-0 top-0 opacity-0 blur-2xl scale-90 translate-y-4 pointer-events-none'
                   }`}
                 >
@@ -1293,7 +1293,7 @@ export default function Home() {
                             aria-hidden={!isActive}
                             className={`bg-black/55 border border-white/15 rounded-xl overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
                               isActive
-                                ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                                ? 'relative opacity-100 blur-0 scale-100 translate-y-0'
                                 : 'absolute inset-x-0 top-0 opacity-0 blur-xl scale-95 translate-y-2 pointer-events-none'
                             }`}
                           >
