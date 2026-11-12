@@ -14,7 +14,8 @@ import {
   Unlock,
   ChevronDown,
   Clock,
-  Copy
+  Copy,
+  FileText
 } from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
@@ -734,6 +735,46 @@ export default function Home() {
                       {result.origin} → {result.destination}
                     </span>
                   </div>
+
+                  {result.dispatchDescriptor && (
+                    <div className="pt-2 mt-2 border-t border-white/10 space-y-1">
+                      <div className="flex items-center justify-between text-[10px] uppercase font-bold text-white/60 tracking-wider">
+                        <span>UPU Dispatch Corridor</span>
+                        <span className="text-white/40">{result.dispatchDescriptor.mailClass.split(' ')[1] || 'Airmail'}</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-white/85">
+                        <span className="text-white font-semibold">{result.dispatchDescriptor.originExchangeCode}</span>
+                        <span className="text-white/40 mx-1.5">→</span>
+                        <span className="text-white font-semibold">{result.dispatchDescriptor.destinationExchangeCode}</span>
+                      </div>
+                      <div className="text-[10px] text-white/50 truncate">
+                        {result.dispatchDescriptor.originExchangeName} → {result.dispatchDescriptor.destinationExchangeName}
+                      </div>
+                    </div>
+                  )}
+
+                  {result.beatPrediction && (
+                    <div className="p-2.5 bg-white/5 border border-white/10 rounded-xl space-y-1">
+                      <div className="flex items-center justify-between text-[10px] uppercase font-bold tracking-wider">
+                        <span className="text-white/90">Last-Mile Beat Status</span>
+                        {result.beatPrediction.isDomesticBeatActive ? (
+                          <span className="text-emerald-400">On Delivery Beat</span>
+                        ) : (
+                          <span className="text-white/50">Processing</span>
+                        )}
+                      </div>
+                      {result.beatPrediction.beatWindow && (
+                        <div className="text-[11px] text-white font-semibold">
+                          {result.beatPrediction.beatWindow}
+                        </div>
+                      )}
+                      {result.beatPrediction.actionNote && (
+                        <div className="text-[10px] text-white/60 leading-snug">
+                          {result.beatPrediction.actionNote}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {result.events.length > 0 && (
@@ -776,26 +817,39 @@ export default function Home() {
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-white/15">
-                  {addFeedback ? (
-                    <div className="w-full py-2.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono uppercase tracking-wider font-bold rounded-xl text-center flex items-center justify-center gap-2 shadow-md">
-                      <Check className="w-4 h-4 text-emerald-400" />
-                      <span>Added successfully</span>
-                    </div>
-                  ) : isAlreadyTracked(result.trackingNo) ? (
-                    <div className="w-full py-2 bg-white/5 border border-white/10 text-white/50 text-[11px] font-mono uppercase tracking-wider rounded-xl text-center flex items-center justify-center gap-1.5">
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>In Daily Tracking</span>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={handleOpenAddAuth}
-                      className="w-full py-2.5 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md flex items-center justify-center gap-1.5"
-                    >
-                      + Add to Daily Tracking
-                    </button>
-                  )}
+                <div className="pt-2 border-t border-white/15 flex items-center gap-2">
+                  <a
+                    href={`/api/certificate?id=${encodeURIComponent(result.trackingNo)}&format=print`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white text-[11px] font-mono uppercase tracking-wider rounded-xl transition flex items-center gap-1.5"
+                    title="Export verifiable proof certificate for customs / disputes"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Proof Certificate</span>
+                  </a>
+
+                  <div className="flex-1">
+                    {addFeedback ? (
+                      <div className="w-full py-2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-mono uppercase tracking-wider font-bold rounded-xl text-center flex items-center justify-center gap-2 shadow-md">
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>Added</span>
+                      </div>
+                    ) : isAlreadyTracked(result.trackingNo) ? (
+                      <div className="w-full py-2 bg-white/5 border border-white/10 text-white/50 text-[11px] font-mono uppercase tracking-wider rounded-xl text-center flex items-center justify-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>In Watchlist</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleOpenAddAuth}
+                        className="w-full py-2 bg-white/90 hover:bg-white text-black text-xs font-mono uppercase tracking-wider font-bold rounded-xl transition shadow-md flex items-center justify-center gap-1.5"
+                      >
+                        + Add to Daily
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

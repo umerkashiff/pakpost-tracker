@@ -14,6 +14,10 @@ import {
   getCachedTrackingResult,
   saveCachedTrackingResult
 } from './config';
+import {
+  resolveDispatchDescriptor,
+  predictPostmanBeat
+} from './logistics-intelligence';
 
 function parseEmttsTimestamp(dateStr: string, timeStr: string): number {
   if (!dateStr) return 0;
@@ -505,6 +509,24 @@ export async function fetchPakistanPostTracking(
       usedCachedUpstream
     }
   };
+
+  if (finalResult.found) {
+    const dispatch = resolveDispatchDescriptor(finalResult);
+    if (dispatch) {
+      finalResult.dispatchDescriptor = {
+        originExchangeCode: dispatch.originExchangeCode,
+        originExchangeName: dispatch.originExchangeName,
+        destinationExchangeCode: dispatch.destinationExchangeCode,
+        destinationExchangeName: dispatch.destinationExchangeName,
+        mailClass: dispatch.mailClass,
+        carrierLogisticsLane: dispatch.carrierLogisticsLane
+      };
+    }
+    const beat = predictPostmanBeat(finalResult);
+    if (beat) {
+      finalResult.beatPrediction = beat;
+    }
+  }
 
   if (finalResult.found && finalResult.events.length > 0) {
     await saveCachedTrackingResult(trackingNo, finalResult);

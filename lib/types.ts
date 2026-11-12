@@ -64,6 +64,21 @@ export interface TrackingResult {
   handoffStatus?: HandoffStatus;
   isUpdated?: boolean;
   routeProfile?: ParcelRouteProfile;
+  dispatchDescriptor?: {
+    originExchangeCode: string;
+    originExchangeName: string;
+    destinationExchangeCode: string;
+    destinationExchangeName: string;
+    mailClass: string;
+    carrierLogisticsLane?: string;
+  };
+  beatPrediction?: {
+    isDomesticBeatActive: boolean;
+    beatWindow?: string;
+    deliveryOffice?: string;
+    dutyPayableAtDoor: boolean;
+    actionNote?: string;
+  };
   sourceHealth?: {
     emttsOk: boolean;
     upstreamOk: boolean;
