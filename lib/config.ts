@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import {
   ParcelConfig,
   TrackingEvent,
@@ -337,6 +338,42 @@ export async function markRouteCooldown(routeKey: string, ttlSeconds = 300): Pro
     await redis.set(`pakpost:cooldown:${routeKey}`, '1', { ex: ttlSeconds });
   } catch {
     // non-fatal cooldown write failure
+  }
+}
+
+export async function checkRateLimit(
+  bucket: string,
+  identifier: string,
+  limit: number,
+  windowSeconds: number
+): Promise<{ allowed: boolean; limit: number; remaining: number; retryAfter: number }> {
+  const redis = getRedis();
+  if (!redis) {
+    return { allowed: true, limit, remaining: limit, retryAfter: 0 };
+  }
+
+  const hashedId = crypto
+    .createHash('sha256')
+    .update(identifier || 'unknown')
+    .digest('hex')
+    .slice(0, 16);
+  const key = `pakpost:rl:${bucket}:${hashedId}`;
+
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) {
+      await redis.expire(key, windowSeconds);
+    }
+    const allowed = count <= limit;
+    const retryAfter = allowed ? 0 : Math.max(1, await redis.ttl(key));
+    return {
+      allowed,
+      limit,
+      remaining: Math.max(0, limit - count),
+      retryAfter
+    };
+  } catch {
+    return { allowed: true, limit, remaining: limit, retryAfter: 0 };
   }
 }
 
