@@ -1219,10 +1219,9 @@ export default function Home() {
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-white/80">
                       <span>Public Endpoint</span>
-                      <span className="text-[10px] text-emerald-400">GET / POST • No Key</span>
                     </div>
                     <div className="flex items-center gap-2 bg-black/50 border border-white/20 rounded-xl px-3 py-1.5">
-                      <code className="text-[11px] font-mono text-white/90 truncate flex-1">
+                      <code className="text-[11px] font-mono text-white/90 flex-1 min-w-0 overflow-x-auto whitespace-nowrap pr-5 [mask-image:linear-gradient(to_right,black_calc(100%-20px),transparent)]">
                         {endpointUrl}
                       </code>
                       <button
@@ -1289,17 +1288,19 @@ export default function Home() {
                       {(['python', 'curl', 'js'] as const).map((lang) => {
                         const isActive = apiLang === lang;
                         return (
-                          <pre
+                          <div
                             key={lang}
                             aria-hidden={!isActive}
-                            className={`p-2.5 bg-black/55 border border-white/15 rounded-xl text-[11px] font-mono text-white/85 overflow-x-auto leading-snug transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
+                            className={`bg-black/55 border border-white/15 rounded-xl overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
                               isActive
                                 ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
                                 : 'absolute inset-x-0 top-0 opacity-0 blur-xl scale-95 translate-y-2 pointer-events-none'
                             }`}
                           >
-                            <code>{snippets[lang]}</code>
-                          </pre>
+                            <pre className="p-2.5 pr-6 text-[11px] font-mono text-white/85 overflow-x-auto leading-snug [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]">
+                              <code>{snippets[lang]}</code>
+                            </pre>
+                          </div>
                         );
                       })}
                     </div>
