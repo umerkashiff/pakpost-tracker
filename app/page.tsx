@@ -13,7 +13,8 @@ import {
   Lock,
   Unlock,
   ChevronDown,
-  Clock
+  Clock,
+  Copy
 } from 'lucide-react';
 import GradientASCII from '@/components/GradientASCII';
 import { TrackingResult } from '@/lib/types';
@@ -148,6 +149,19 @@ export default function Home() {
   const [webhookUrl, setWebhookUrl] = useState('');
   const [settingsFeedback, setSettingsFeedback] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'config' | 'api'>('config');
+  const [apiLang, setApiLang] = useState<'python' | 'curl' | 'js'>('python');
+  const [copiedApiKey, setCopiedApiKey] = useState<'endpoint' | 'snippet' | null>(null);
+
+  const handleCopyApi = async (key: 'endpoint' | 'snippet', text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedApiKey(key);
+      setTimeout(() => setCopiedApiKey((prev) => (prev === key ? null : prev)), 1800);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   // Passcode modal state for Add & Delete actions
   const [authModal, setAuthModal] = useState<{
@@ -872,11 +886,8 @@ export default function Home() {
               : 'opacity-0 blur-2xl scale-90 -translate-y-8 pointer-events-none'
           }`}
         >
-          <form
-            onSubmit={handleSaveSettings}
-            className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 text-white"
-          >
-            <div className="flex items-center justify-between border-b border-white/20 pb-3">
+          <div className="bg-black/60 border border-white/20 shadow-[0_16px_40px_rgba(0,0,0,0.6)] rounded-2xl p-6 space-y-4 text-white">
+            <div className="flex items-center justify-between border-b border-white/20 pb-3 gap-2">
               <h2 className="text-xs font-mono font-bold uppercase tracking-wider flex items-center gap-1.5">
                 {isUnlocked ? (
                   <Unlock className="w-3.5 h-3.5 text-white" />
@@ -885,14 +896,45 @@ export default function Home() {
                 )}
                 Settings
               </h2>
-              <button
-                type="button"
-                onClick={() => setView('search')}
-                className="text-white/70 hover:text-white transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-2">
+                <div className="flex items-center bg-black/50 border border-white/15 rounded-lg p-0.5 text-[10px] font-mono uppercase tracking-wider">
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('config')}
+                    className={`px-2.5 py-1 rounded-md transition ${
+                      settingsTab === 'config'
+                        ? 'bg-white/90 text-black font-bold'
+                        : 'text-white/65 hover:text-white'
+                    }`}
+                  >
+                    Config
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsTab('api')}
+                    className={`px-2.5 py-1 rounded-md transition ${
+                      settingsTab === 'api'
+                        ? 'bg-white/90 text-black font-bold'
+                        : 'text-white/65 hover:text-white'
+                    }`}
+                  >
+                    API
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setView('search')}
+                  className="text-white/70 hover:text-white transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
+
+            {settingsTab === 'config' ? (
+              <form onSubmit={handleSaveSettings} className="space-y-4">
 
             {/* Passcode Lock */}
             <div className="space-y-1.5">
@@ -1141,6 +1183,120 @@ export default function Home() {
               {savingSettings ? 'Saving...' : 'Save Changes'}
             </button>
           </form>
+            ) : (() => {
+              const apiBaseUrl =
+                typeof window !== 'undefined'
+                  ? window.location.origin
+                  : 'https://pakpost-track.vercel.app';
+              const endpointUrl = `${apiBaseUrl}/api/track?id=CP123456789PK`;
+              const snippets: Record<'python' | 'curl' | 'js', string> = {
+                python: `import requests\n\nres = requests.get(\n    "${apiBaseUrl}/api/track",\n    params={"id": "CP123456789PK"},\n    timeout=20,\n)\ndata = res.json()\nprint(data["statusCategory"], data.get("latestEvent"))`,
+                curl: `curl -s "${apiBaseUrl}/api/track?id=CP123456789PK"`,
+                js: `const res = await fetch("${apiBaseUrl}/api/track?id=CP123456789PK");\nconst data = await res.json();\nconsole.log(data.statusCategory, data.latestEvent);`
+              };
+              const activeSnippet = snippets[apiLang];
+
+              return (
+                <div className="space-y-3.5">
+                  {/* Endpoint URL */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-mono uppercase tracking-wider text-white/80">
+                      <span>Public Endpoint</span>
+                      <span className="text-[10px] text-emerald-400">GET / POST • No Key</span>
+                    </div>
+                    <div className="flex items-center gap-2 bg-black/50 border border-white/20 rounded-xl px-3 py-2">
+                      <code className="text-[11px] font-mono text-white/90 truncate flex-1">
+                        {endpointUrl}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyApi('endpoint', endpointUrl)}
+                        className="text-white/70 hover:text-white transition shrink-0 flex items-center gap-1 text-[10px] font-mono uppercase"
+                        title="Copy endpoint URL"
+                      >
+                        {copiedApiKey === 'endpoint' ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Code Snippet */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1 bg-black/40 border border-white/15 rounded-lg p-0.5 text-[10px] font-mono uppercase">
+                        {(['python', 'curl', 'js'] as const).map((lang) => (
+                          <button
+                            key={lang}
+                            type="button"
+                            onClick={() => setApiLang(lang)}
+                            className={`px-2 py-1 rounded-md transition ${
+                              apiLang === lang
+                                ? 'bg-white/90 text-black font-bold'
+                                : 'text-white/65 hover:text-white'
+                            }`}
+                          >
+                            {lang === 'js' ? 'JS' : lang}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCopyApi('snippet', activeSnippet)}
+                        className="text-white/70 hover:text-white transition flex items-center gap-1 text-[10px] font-mono uppercase"
+                      >
+                        {copiedApiKey === 'snippet' ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy Code</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <pre className="p-3 bg-black/55 border border-white/15 rounded-xl text-[11px] font-mono text-white/85 overflow-x-auto leading-relaxed">
+                      <code>{activeSnippet}</code>
+                    </pre>
+                  </div>
+
+                  {/* Usage Instructions */}
+                  <div className="p-3 bg-black/40 border border-white/15 rounded-xl space-y-1.5 text-[11px] font-mono text-white/70 leading-relaxed">
+                    <div className="text-white/90 uppercase tracking-wider text-[10px] font-bold">
+                      How to use
+                    </div>
+                    <p>
+                      • Pass any tracking ID via <code className="text-white">?id=</code> (GET) or{' '}
+                      <code className="text-white">{`{"id": "..."}`}</code> (POST JSON).
+                    </p>
+                    <p>
+                      • Cached 5m for speed (7d if delivered). Add{' '}
+                      <code className="text-white">&amp;refresh=true</code> for a live check.
+                    </p>
+                    <p>
+                      • Returns <code className="text-white">statusCategory</code>,{' '}
+                      <code className="text-white">latestEvent</code>,{' '}
+                      <code className="text-white">events[]</code>, and{' '}
+                      <code className="text-white">handoffStatus</code>.
+                    </p>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       </div>
 

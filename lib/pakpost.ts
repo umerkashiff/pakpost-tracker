@@ -8,7 +8,12 @@ import {
   UpstreamProviderRoute
 } from './types';
 import { fetchUpstreamTracking, UpstreamTrackingResult } from './upstream';
-import { getParcelSnapshot, saveParcelSnapshot } from './config';
+import {
+  getParcelSnapshot,
+  saveParcelSnapshot,
+  getCachedTrackingResult,
+  saveCachedTrackingResult
+} from './config';
 
 function parseEmttsTimestamp(dateStr: string, timeStr: string): number {
   if (!dateStr) return 0;
@@ -124,10 +129,10 @@ interface EmttsFetchResult {
   error?: string;
 }
 
-async function fetchEmttsOnce(trackingNo: string): Promise<EmttsFetchResult> {
+async function fetchEmttsOnce(trackingNo: string, timeoutMs = 11000): Promise<EmttsFetchResult> {
   const url = `https://ep.gov.pk/emtts/EPTrack_Live.aspx?ArticleIDz=${encodeURIComponent(trackingNo)}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -211,11 +216,15 @@ async function fetchEmttsOnce(trackingNo: string): Promise<EmttsFetchResult> {
   }
 }
 
-async function fetchEmttsWithRetry(trackingNo: string): Promise<EmttsFetchResult> {
-  const first = await fetchEmttsOnce(trackingNo);
-  if (first.ok) return first;
-  await new Promise((resolve) => setTimeout(resolve, 700));
-  return fetchEmttsOnce(trackingNo);
+async function fetchEmttsWithRetry(
+  trackingNo: string,
+  options?: { timeoutMs?: number; allowRetry?: boolean }
+): Promise<EmttsFetchResult> {
+  const timeoutMs = options?.timeoutMs ?? 11000;
+  const first = await fetchEmttsOnce(trackingNo, timeoutMs);
+  if (first.ok || options?.allowRetry === false) return first;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return fetchEmttsOnce(trackingNo, timeoutMs);
 }
 
 /**
@@ -283,14 +292,40 @@ export async function fetchPakistanPostTracking(
     };
   }
 
-  // Run EMTTS (with retry) + deterministic upstream + prior snapshot read concurrently
-  const [emttsResult, upstream, prevSnapshot] = await Promise.all([
-    fetchEmttsWithRetry(trackingNo),
-    fetchUpstreamTracking(trackingNo, options).catch((err): UpstreamTrackingResult | null => {
-      console.error('Error fetching upstream tracking:', err);
-      return null;
-    }),
+  // Fast-path: check full-result Redis cache + prior snapshot concurrently
+  const [cachedResult, prevSnapshot] = await Promise.all([
+    !options?.bypassCache ? getCachedTrackingResult(trackingNo) : Promise.resolve(null),
     getParcelSnapshot(trackingNo)
+  ]);
+
+  if (cachedResult && cachedResult.found) {
+    return {
+      ...cachedResult,
+      label: label ?? cachedResult.label
+    };
+  }
+
+  // Skip origin upstream query once domestic leg is already active and origin events are preserved
+  const originAlreadyHandedOff = Boolean(
+    prevSnapshot?.emttsEvents?.length &&
+      hasDomesticScanEvent(prevSnapshot.emttsEvents) &&
+      prevSnapshot?.upstreamEvents?.length
+  );
+
+  const hasSavedEmtts = Boolean(prevSnapshot?.emttsEvents?.length);
+
+  // Run destination + upstream lookups concurrently with adaptive timeouts
+  const [emttsResult, upstream] = await Promise.all([
+    fetchEmttsWithRetry(trackingNo, {
+      timeoutMs: hasSavedEmtts ? 9000 : 11000,
+      allowRetry: !hasSavedEmtts
+    }),
+    originAlreadyHandedOff
+      ? Promise.resolve(null)
+      : fetchUpstreamTracking(trackingNo, options).catch((err): UpstreamTrackingResult | null => {
+          console.error('Error fetching upstream tracking:', err);
+          return null;
+        })
   ]);
 
   let usedCachedEmtts = false;
@@ -449,7 +484,7 @@ export async function fetchPakistanPostTracking(
         }
       : undefined;
 
-  return {
+  const finalResult: TrackingResult = {
     trackingNo: emttsResult.parsedTrackingNo || trackingNo,
     label,
     origin: finalOrigin,
@@ -465,10 +500,16 @@ export async function fetchPakistanPostTracking(
     routeProfile,
     sourceHealth: {
       emttsOk: emttsResult.ok,
-      upstreamOk: Boolean(upstream?.found && !downgradedOverSpringGds),
+      upstreamOk: originAlreadyHandedOff || Boolean(upstream?.found && !downgradedOverSpringGds),
       usedCachedEmtts,
       usedCachedUpstream
     }
   };
+
+  if (finalResult.found && finalResult.events.length > 0) {
+    await saveCachedTrackingResult(trackingNo, finalResult);
+  }
+
+  return finalResult;
 }
 

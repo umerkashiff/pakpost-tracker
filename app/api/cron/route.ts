@@ -4,12 +4,33 @@ import {
   getLastParcelSignature,
   getParcelAlertState,
   saveParcelAlertState,
+  getCachedTrackingResult,
   evaluateParcelProgression
 } from '@/lib/config';
 import { fetchPakistanPostTracking } from '@/lib/pakpost';
 import { sendDiscordNotification } from '@/lib/discord';
 import { safeCompare } from '@/lib/crypto';
 import { TrackingResult } from '@/lib/types';
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runNext(): Promise<void> {
+    while (nextIndex < items.length) {
+      const current = nextIndex++;
+      results[current] = await worker(items[current]);
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => runNext()));
+  return results;
+}
 
 async function handleCheck(request: NextRequest) {
   // 1. Verify Authorization if CRON_SECRET is configured
@@ -44,34 +65,40 @@ async function handleCheck(request: NextRequest) {
   const forcePush = request.nextUrl.searchParams.get('force') === 'true';
   const shouldNotify = request.nextUrl.searchParams.get('notify') !== 'false';
 
-  // 3. Track each parcel with diff detection
-  const results: TrackingResult[] = [];
-  const changedResults: TrackingResult[] = [];
-
-  for (const parcel of parcels) {
-    const result = await fetchPakistanPostTracking(parcel.id, parcel.label, { bypassCache: true });
-    results.push(result);
-
+  // 3. Track parcels concurrently (pool size 4) with monotonic diff detection
+  const checkedItems = await runWithConcurrency(parcels, 4, async (parcel) => {
     const [prevState, legacySig] = await Promise.all([
       getParcelAlertState(parcel.id),
       getLastParcelSignature(parcel.id)
     ]);
 
+    // Terminal DELIVERED parcels no longer move; reuse cached snapshot without re-scraping
+    if (prevState?.lastStatusCategory === 'DELIVERED' && !forcePush) {
+      const cached = await getCachedTrackingResult(parcel.id);
+      if (cached) {
+        return { result: { ...cached, label: parcel.label ?? cached.label }, changed: false };
+      }
+    }
+
+    const result = await fetchPakistanPostTracking(parcel.id, parcel.label, { bypassCache: true });
     const progression = evaluateParcelProgression(result, prevState, legacySig);
     const isChanged = forcePush || progression.shouldAlert;
 
     if (isChanged) {
       result.isUpdated = true;
-      changedResults.push(result);
     }
 
     if (progression.nextState && (progression.stateDirty || forcePush)) {
       await saveParcelAlertState(parcel.id, progression.nextState);
     }
 
-    // 500ms delay between consecutive queries
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
+    return { result, changed: isChanged };
+  });
+
+  const results: TrackingResult[] = checkedItems.map((item) => item.result);
+  const changedResults: TrackingResult[] = checkedItems
+    .filter((item) => item.changed)
+    .map((item) => item.result);
 
   // 4. Send notification to Discord ONLY for parcels that actually changed
   let discordResult: { success: boolean; error?: string; count: number; message?: string } = {

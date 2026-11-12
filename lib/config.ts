@@ -290,6 +290,56 @@ export async function saveParcelAlertState(parcelId: string, state: ParcelAlertS
   await saveLastParcelSignature(parcelId, cappedState.signature);
 }
 
+export async function getCachedTrackingResult(parcelId: string): Promise<TrackingResult | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  const cleanId = parcelId.trim().toUpperCase();
+  if (!cleanId) return null;
+  try {
+    const raw = await redis.get<string>(`pakpost:cache:v4:result:${cleanId}`);
+    if (!raw || typeof raw !== 'string') return null;
+    return JSON.parse(decrypt(raw)) as TrackingResult;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCachedTrackingResult(parcelId: string, result: TrackingResult): Promise<void> {
+  const redis = getRedis();
+  if (!redis || !result.found) return;
+  const cleanId = parcelId.trim().toUpperCase();
+  if (!cleanId) return;
+  try {
+    const ttlSeconds = result.statusCategory === 'DELIVERED' ? 60 * 60 * 24 * 7 : 300;
+    await redis.set(`pakpost:cache:v4:result:${cleanId}`, encrypt(JSON.stringify(result)), {
+      ex: ttlSeconds
+    });
+  } catch {
+    // non-fatal cache write failure
+  }
+}
+
+export async function isRouteInCooldown(routeKey: string): Promise<boolean> {
+  const redis = getRedis();
+  if (!redis || !routeKey) return false;
+  try {
+    const flag = await redis.get<string>(`pakpost:cooldown:${routeKey}`);
+    return Boolean(flag);
+  } catch {
+    return false;
+  }
+}
+
+export async function markRouteCooldown(routeKey: string, ttlSeconds = 300): Promise<void> {
+  const redis = getRedis();
+  if (!redis || !routeKey) return;
+  try {
+    await redis.set(`pakpost:cooldown:${routeKey}`, '1', { ex: ttlSeconds });
+  } catch {
+    // non-fatal cooldown write failure
+  }
+}
+
 export async function clearParcelTrackingState(parcelId: string): Promise<void> {
   const redis = getRedis();
   if (!redis) return;
@@ -302,7 +352,8 @@ export async function clearParcelTrackingState(parcelId: string): Promise<void> 
       redis.hdel(REDIS_ALERT_STATES_KEY, cleanId),
       redis.hdel(REDIS_SIGNATURES_KEY, cleanId),
       redis.del(`pakpost:cache:v3:upstream:${cleanId}`),
-      redis.del(`pakpost:cache:v4:upstream:${cleanId}`)
+      redis.del(`pakpost:cache:v4:upstream:${cleanId}`),
+      redis.del(`pakpost:cache:v4:result:${cleanId}`)
     ]);
   } catch (err) {
     console.error('Error clearing parcel tracking state:', err);

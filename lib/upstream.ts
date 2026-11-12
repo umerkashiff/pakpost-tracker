@@ -1,7 +1,12 @@
 import { TrackingEvent, StatusCategory, ParcelRouteProfile, UpstreamProviderRoute } from './types';
 import { createTracker, type Tracker } from 'universal-parcel-scraper/node';
 import { getRedis } from './redis';
-import { getParcelRoute, saveParcelRoute } from './config';
+import {
+  getParcelRoute,
+  saveParcelRoute,
+  isRouteInCooldown,
+  markRouteCooldown
+} from './config';
 
 // Friendly carrier name map
 const CARRIER_NAMES: Record<string, string> = {
@@ -426,12 +431,80 @@ async function queryUniversalScraper(
 }
 
 /**
- * Deterministic Upstream Tracking Waterfall with Redis Route Pinning:
+ * Generic hedged execution with Redis circuit-breaker cooldown:
+ * - If primary recently failed/rate-limited (cooldown), jumps straight to fallback immediately.
+ * - Otherwise starts primary; if primary takes > hedgeDelayMs, starts fallback in parallel.
+ */
+async function fetchHedged(
+  primaryCooldownKey: string,
+  primaryFn: () => Promise<UpstreamTrackingResult | null>,
+  fallbackFn: () => Promise<UpstreamTrackingResult | null>,
+  hedgeDelayMs = 3500
+): Promise<UpstreamTrackingResult | null> {
+  if (await isRouteInCooldown(primaryCooldownKey)) {
+    return fallbackFn();
+  }
+
+  let fallbackStarted = false;
+  let fallbackPromise: Promise<UpstreamTrackingResult | null> | null = null;
+  let hedgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const startFallback = () => {
+    if (!fallbackStarted) {
+      fallbackStarted = true;
+      fallbackPromise = fallbackFn().catch(() => null);
+    }
+    return fallbackPromise!;
+  };
+
+  const primaryPromise = primaryFn()
+    .then(async (res) => {
+      if (res && res.found && res.events.length > 0) {
+        return res;
+      }
+      await markRouteCooldown(primaryCooldownKey, 300);
+      return null;
+    })
+    .catch(async () => {
+      await markRouteCooldown(primaryCooldownKey, 300);
+      return null;
+    });
+
+  const raceWinner = await new Promise<'primary' | 'hedge'>((resolve) => {
+    hedgeTimer = setTimeout(() => {
+      startFallback();
+      resolve('hedge');
+    }, hedgeDelayMs);
+
+    primaryPromise.then((res) => {
+      if (hedgeTimer) clearTimeout(hedgeTimer);
+      if (res) {
+        resolve('primary');
+      } else {
+        startFallback();
+        resolve('hedge');
+      }
+    });
+  });
+
+  if (raceWinner === 'primary') {
+    return primaryPromise;
+  }
+
+  // Allow primary a short grace window to beat fallback if both are in flight
+  const [primaryRes, fallbackRes] = await Promise.all([
+    Promise.race([primaryPromise, new Promise<null>((r) => setTimeout(() => r(null), 1500))]),
+    startFallback()
+  ]);
+
+  return primaryRes || fallbackRes;
+}
+
+/**
+ * Deterministic Upstream Tracking Waterfall with Redis Route Pinning + Hedged Fallbacks:
  * 1. Domestic (*PK) -> Skip upstream completely (EMTTS only)
- * 2. Check pinned canonical route for this parcel so repeated lookups never jump providers randomly
- * 3. China / AliExpress (*CN / LP*) -> Cainiao Direct -> China Post Direct/UPU
- * 4. Netherlands (*NL) -> Spring GDS / PostNL (explicit carrier) -> PostNL Consumer fallback only if unreachable
- * 5. Other International -> Mapped Origin Carrier / High-Confidence Detector -> ParcelsApp fallback only if empty
+ * 2. Parallelize Redis upstream cache + pinned route read
+ * 3. Use hedged primary -> fallback execution with automatic 5-min cooldown on failing routes
  */
 export async function fetchUpstreamTracking(
   rawId: string,
@@ -442,18 +515,19 @@ export async function fetchUpstreamTracking(
     return null;
   }
 
-  // Check short-lived Redis cache (15 min TTL) unless bypassed by cron/explicit refresh
   const cacheKey = `pakpost:cache:v4:upstream:${cleanId}`;
   const redis = getRedis();
-  if (redis && !options?.bypassCache) {
-    try {
-      const cached = await redis.get<UpstreamTrackingResult>(cacheKey);
-      if (cached && cached.found && Array.isArray(cached.events) && cached.events.length > 0) {
-        return cached;
-      }
-    } catch {
-      // non-fatal cache miss
-    }
+
+  // Parallelize Redis cache + pinned route lookup in one round-trip
+  const [cached, pinned] = await Promise.all([
+    redis && !options?.bypassCache
+      ? redis.get<UpstreamTrackingResult>(cacheKey).catch(() => null)
+      : Promise.resolve(null),
+    getParcelRoute(cleanId)
+  ]);
+
+  if (cached && cached.found && Array.isArray(cached.events) && cached.events.length > 0) {
+    return cached;
   }
 
   // Detect country from standard UPU S10 suffix (e.g. LT880952265NL -> NL)
@@ -462,64 +536,98 @@ export async function fetchUpstreamTracking(
   const originCountry = countryCode ? (COUNTRY_NAMES[countryCode] || countryCode) : 'International';
   const mappedS10Carrier = countryCode ? S10_CARRIER_MAP[countryCode] : undefined;
 
-  const pinned = await getParcelRoute(cleanId);
   let result: UpstreamTrackingResult | null = null;
 
   if (countryCode === 'CN' || cleanId.startsWith('LP')) {
-    // Stream 1: China / AliExpress -> Official Cainiao first, or pinned direct-upu
     if (pinned?.upstreamRoute === 'direct-upu') {
-      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
-        provider: 'UPU',
-        carrier: pinned.carrierId !== 'upstream' ? pinned.carrierId : 'china-post',
-        upstreamRoute: 'direct-upu'
-      });
-    }
-    if (!result) {
-      result = await fetchCainiaoDirect(cleanId);
-    }
-    if (!result) {
-      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
-        provider: 'UPU',
-        carrier: mappedS10Carrier || 'china-post',
-        upstreamRoute: 'direct-upu'
-      });
+      result = await fetchHedged(
+        `direct-upu:${pinned.carrierId || 'china-post'}`,
+        () =>
+          queryUniversalScraper(cleanId, originCountry, countryCode, {
+            provider: 'UPU',
+            carrier: pinned.carrierId !== 'upstream' ? pinned.carrierId : 'china-post',
+            upstreamRoute: 'direct-upu'
+          }),
+        () => fetchCainiaoDirect(cleanId)
+      );
+    } else {
+      result = await fetchHedged(
+        'cainiao-direct:cainiao',
+        () => fetchCainiaoDirect(cleanId),
+        () =>
+          queryUniversalScraper(cleanId, originCountry, countryCode, {
+            provider: 'UPU',
+            carrier: mappedS10Carrier || 'china-post',
+            upstreamRoute: 'direct-upu'
+          })
+      );
     }
   } else if (countryCode === 'NL') {
-    // Stream 2: Netherlands -> Always try authoritative Spring GDS / PostNL first with explicit carrier
-    result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
-      provider: 'UPU',
-      carrier: 'spring-gds',
-      budgetMs: 18000,
-      upstreamRoute: 'spring-gds'
-    });
-    // Ephemeral fallback only when Spring GDS completely fails/timeouts (never overwrite spring-gds pin)
-    if (!result) {
-      result = await fetchPostNLConsumerObservations(cleanId);
-    }
+    result = await fetchHedged(
+      'spring-gds:spring-gds',
+      () =>
+        queryUniversalScraper(cleanId, originCountry, countryCode, {
+          provider: 'UPU',
+          carrier: 'spring-gds',
+          budgetMs: 14000,
+          upstreamRoute: 'spring-gds'
+        }),
+      () => fetchPostNLConsumerObservations(cleanId)
+    );
   } else if (pinned && pinned.upstreamRoute !== 'postnl-consumer') {
-    // Follow pinned canonical route deterministically for non-CN/NL parcels
     const pinnedProvider = pinned.upstreamRoute === 'parcelsapp' ? 'ParcelsApp' : 'UPU';
-    result = await queryUniversalScraper(cleanId, pinned.originCountry || originCountry, countryCode, {
-      provider: pinnedProvider,
-      carrier: pinned.carrierId && pinned.carrierId !== 'upstream' ? pinned.carrierId : mappedS10Carrier,
-      upstreamRoute: pinned.upstreamRoute
-    });
-  } else {
-    // Stream 3: Other global postal & express carriers (USPS, Royal Mail, DHL, UPS, FedEx, etc.)
-    result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
-      provider: 'UPU',
-      carrier: mappedS10Carrier,
-      budgetMs: 18000,
-      upstreamRoute: 'direct-upu'
-    });
-    if (!result) {
-      result = await queryUniversalScraper(cleanId, originCountry, countryCode, {
-        provider: 'ParcelsApp',
-        carrier: mappedS10Carrier,
-        budgetMs: 20000,
-        upstreamRoute: 'parcelsapp'
-      });
+    const pinnedCarrier =
+      pinned.carrierId && pinned.carrierId !== 'upstream' ? pinned.carrierId : mappedS10Carrier;
+
+    if (pinnedProvider === 'UPU') {
+      result = await fetchHedged(
+        `${pinned.upstreamRoute}:${pinnedCarrier || 'generic'}`,
+        () =>
+          queryUniversalScraper(cleanId, pinned.originCountry || originCountry, countryCode, {
+            provider: 'UPU',
+            carrier: pinnedCarrier,
+            budgetMs: 14000,
+            upstreamRoute: pinned.upstreamRoute
+          }),
+        () =>
+          queryUniversalScraper(cleanId, pinned.originCountry || originCountry, countryCode, {
+            provider: 'ParcelsApp',
+            carrier: pinnedCarrier,
+            budgetMs: 16000,
+            upstreamRoute: 'parcelsapp'
+          })
+      );
+    } else {
+      result = await queryUniversalScraper(
+        cleanId,
+        pinned.originCountry || originCountry,
+        countryCode,
+        {
+          provider: 'ParcelsApp',
+          carrier: pinnedCarrier,
+          budgetMs: 16000,
+          upstreamRoute: 'parcelsapp'
+        }
+      );
     }
+  } else {
+    result = await fetchHedged(
+      `direct-upu:${mappedS10Carrier || 'generic'}`,
+      () =>
+        queryUniversalScraper(cleanId, originCountry, countryCode, {
+          provider: 'UPU',
+          carrier: mappedS10Carrier,
+          budgetMs: 14000,
+          upstreamRoute: 'direct-upu'
+        }),
+      () =>
+        queryUniversalScraper(cleanId, originCountry, countryCode, {
+          provider: 'ParcelsApp',
+          carrier: mappedS10Carrier,
+          budgetMs: 16000,
+          upstreamRoute: 'parcelsapp'
+        })
+    );
   }
 
   // Persist route pin for non-degraded canonical routes + short-lived cache

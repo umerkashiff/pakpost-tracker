@@ -30,19 +30,18 @@ function sanitizeResult(result: TrackingResult, realId: string, isTrackedParcel:
   };
 }
 
-export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  const alias = searchParams.get('alias');
-  const id = searchParams.get('id');
-  const label = searchParams.get('label') || undefined;
-
-  let targetId = (id || '').trim().toUpperCase();
-  let targetLabel = label;
+async function resolveAndTrack(params: {
+  alias?: string | null;
+  id?: string | null;
+  label?: string;
+  refresh?: boolean;
+}): Promise<{ status: number; body: TrackingResult | { error: string } }> {
+  let targetId = (params.id || '').trim().toUpperCase();
+  let targetLabel = params.label;
   let isTracked = false;
 
-  // 1. If alias is passed, look up secure parcel
-  if (alias) {
-    const parcel = await getParcelByAliasOrId(alias);
+  if (params.alias) {
+    const parcel = await getParcelByAliasOrId(params.alias);
     if (parcel) {
       targetId = parcel.id;
       targetLabel = parcel.label || targetLabel;
@@ -51,61 +50,45 @@ export async function GET(request: NextRequest) {
   }
 
   if (!targetId) {
-    return NextResponse.json(
-      { error: 'Tracking ID or alias is required' },
-      { status: 400 }
-    );
+    return { status: 400, body: { error: 'Tracking ID or alias is required' } };
   }
 
-  // 2. Check if target ID belongs to owner's private tracked list
-  if (!isTracked) {
-    const allTracked = await getTrackedParcels();
-    if (allTracked.some((p) => p.id.toUpperCase() === targetId)) {
-      isTracked = true;
-    }
+  // Run watchlist check + tracking lookup concurrently
+  const [allTracked, rawResult] = await Promise.all([
+    isTracked ? Promise.resolve(null) : getTrackedParcels(),
+    fetchPakistanPostTracking(targetId, targetLabel, { bypassCache: Boolean(params.refresh) })
+  ]);
+
+  if (!isTracked && allTracked?.some((p) => p.id.toUpperCase() === targetId)) {
+    isTracked = true;
   }
 
-  const rawResult = await fetchPakistanPostTracking(targetId, targetLabel);
-  const sanitized = sanitizeResult(rawResult, targetId, isTracked);
+  return { status: 200, body: sanitizeResult(rawResult, targetId, isTracked) };
+}
 
-  return NextResponse.json(sanitized);
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const { status, body } = await resolveAndTrack({
+    alias: searchParams.get('alias'),
+    id: searchParams.get('id'),
+    label: searchParams.get('label') || undefined,
+    refresh: searchParams.get('refresh') === 'true'
+  });
+
+  return NextResponse.json(body, { status });
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const alias = body.alias;
-    let targetId = (body.id || '').trim().toUpperCase();
-    let targetLabel = body.label;
-    let isTracked = false;
+    const reqBody = await request.json();
+    const { status, body } = await resolveAndTrack({
+      alias: reqBody.alias,
+      id: reqBody.id,
+      label: reqBody.label,
+      refresh: reqBody.refresh === true
+    });
 
-    if (alias) {
-      const parcel = await getParcelByAliasOrId(alias);
-      if (parcel) {
-        targetId = parcel.id;
-        targetLabel = parcel.label || targetLabel;
-        isTracked = true;
-      }
-    }
-
-    if (!targetId) {
-      return NextResponse.json(
-        { error: 'Please provide "id" or "alias" in request body' },
-        { status: 400 }
-      );
-    }
-
-    if (!isTracked) {
-      const allTracked = await getTrackedParcels();
-      if (allTracked.some((p) => p.id.toUpperCase() === targetId)) {
-        isTracked = true;
-      }
-    }
-
-    const rawResult = await fetchPakistanPostTracking(targetId, targetLabel);
-    const sanitized = sanitizeResult(rawResult, targetId, isTracked);
-
-    return NextResponse.json(sanitized);
+    return NextResponse.json(body, { status });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Invalid request' },
