@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   Settings,
   Trash2,
@@ -152,6 +152,11 @@ export default function Home() {
   const [settingsTab, setSettingsTab] = useState<'config' | 'api'>('config');
   const [apiLang, setApiLang] = useState<'python' | 'curl' | 'js'>('python');
   const [copiedApiKey, setCopiedApiKey] = useState<'endpoint' | 'snippet' | null>(null);
+  const apiBaseUrl = useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => 'https://pakpost-track.vercel.app'
+  );
 
   const handleCopyApi = async (key: 'endpoint' | 'snippet', text: string) => {
     try {
@@ -933,8 +938,16 @@ export default function Home() {
               </div>
             </div>
 
-            {settingsTab === 'config' ? (
-              <form onSubmit={handleSaveSettings} className="space-y-4">
+            <div className="relative">
+              <form
+                onSubmit={handleSaveSettings}
+                aria-hidden={settingsTab !== 'config'}
+                className={`space-y-4 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
+                  settingsTab === 'config'
+                    ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                    : 'absolute inset-x-0 top-0 opacity-0 blur-2xl scale-90 -translate-y-4 pointer-events-none'
+                }`}
+              >
 
             {/* Passcode Lock */}
             <div className="space-y-1.5">
@@ -1183,28 +1196,32 @@ export default function Home() {
               {savingSettings ? 'Saving...' : 'Save Changes'}
             </button>
           </form>
-            ) : (() => {
-              const apiBaseUrl =
-                typeof window !== 'undefined'
-                  ? window.location.origin
-                  : 'https://pakpost-track.vercel.app';
+
+          {(() => {
               const endpointUrl = `${apiBaseUrl}/api/track?id=CP123456789PK`;
               const snippets: Record<'python' | 'curl' | 'js', string> = {
-                python: `import requests\n\nres = requests.get(\n    "${apiBaseUrl}/api/track",\n    params={"id": "CP123456789PK"},\n    timeout=20,\n)\ndata = res.json()\nprint(data["statusCategory"], data.get("latestEvent"))`,
+                python: `import requests\n\nres = requests.get(\n  "${apiBaseUrl}/api/track",\n  params={"id": "CP123456789PK"},\n  timeout=20,\n)\ndata = res.json()\nprint(data["statusCategory"], data.get("latestEvent"))`,
                 curl: `curl -s "${apiBaseUrl}/api/track?id=CP123456789PK"`,
-                js: `const res = await fetch("${apiBaseUrl}/api/track?id=CP123456789PK");\nconst data = await res.json();\nconsole.log(data.statusCategory, data.latestEvent);`
+                js: `const res = await fetch(\n  "${apiBaseUrl}/api/track?id=CP123456789PK"\n);\nconst data = await res.json();\nconsole.log(data.statusCategory, data.latestEvent);`
               };
               const activeSnippet = snippets[apiLang];
 
               return (
-                <div className="space-y-3.5">
+                <div
+                  aria-hidden={settingsTab !== 'api'}
+                  className={`space-y-3 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
+                    settingsTab === 'api'
+                      ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                      : 'absolute inset-x-0 top-0 opacity-0 blur-2xl scale-90 translate-y-4 pointer-events-none'
+                  }`}
+                >
                   {/* Endpoint URL */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs font-mono uppercase tracking-wider text-white/80">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-wider text-white/80">
                       <span>Public Endpoint</span>
                       <span className="text-[10px] text-emerald-400">GET / POST • No Key</span>
                     </div>
-                    <div className="flex items-center gap-2 bg-black/50 border border-white/20 rounded-xl px-3 py-2">
+                    <div className="flex items-center gap-2 bg-black/50 border border-white/20 rounded-xl px-3 py-1.5">
                       <code className="text-[11px] font-mono text-white/90 truncate flex-1">
                         {endpointUrl}
                       </code>
@@ -1230,7 +1247,7 @@ export default function Home() {
                   </div>
 
                   {/* Code Snippet */}
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1 bg-black/40 border border-white/15 rounded-lg p-0.5 text-[10px] font-mono uppercase">
                         {(['python', 'curl', 'js'] as const).map((lang) => (
@@ -1238,7 +1255,7 @@ export default function Home() {
                             key={lang}
                             type="button"
                             onClick={() => setApiLang(lang)}
-                            className={`px-2 py-1 rounded-md transition ${
+                            className={`px-2 py-0.5 rounded-md transition ${
                               apiLang === lang
                                 ? 'bg-white/90 text-black font-bold'
                                 : 'text-white/65 hover:text-white'
@@ -1268,34 +1285,46 @@ export default function Home() {
                       </button>
                     </div>
 
-                    <pre className="p-3 bg-black/55 border border-white/15 rounded-xl text-[11px] font-mono text-white/85 overflow-x-auto leading-relaxed">
-                      <code>{activeSnippet}</code>
-                    </pre>
+                    <div className="relative">
+                      {(['python', 'curl', 'js'] as const).map((lang) => {
+                        const isActive = apiLang === lang;
+                        return (
+                          <pre
+                            key={lang}
+                            aria-hidden={!isActive}
+                            className={`p-2.5 bg-black/55 border border-white/15 rounded-xl text-[11px] font-mono text-white/85 overflow-x-auto leading-snug transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] transform ${
+                              isActive
+                                ? 'relative opacity-100 blur-0 scale-100 translate-y-0 pointer-events-auto'
+                                : 'absolute inset-x-0 top-0 opacity-0 blur-xl scale-95 translate-y-2 pointer-events-none'
+                            }`}
+                          >
+                            <code>{snippets[lang]}</code>
+                          </pre>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Usage Instructions */}
-                  <div className="p-3 bg-black/40 border border-white/15 rounded-xl space-y-1.5 text-[11px] font-mono text-white/70 leading-relaxed">
-                    <div className="text-white/90 uppercase tracking-wider text-[10px] font-bold">
-                      How to use
-                    </div>
+                  <div className="p-2.5 bg-black/40 border border-white/15 rounded-xl space-y-1 text-[10px] font-mono text-white/70 leading-relaxed">
                     <p>
-                      • Pass any tracking ID via <code className="text-white">?id=</code> (GET) or{' '}
-                      <code className="text-white">{`{"id": "..."}`}</code> (POST JSON).
+                      <span className="text-white/90 font-bold uppercase">Usage:</span> Send{' '}
+                      <code className="text-white">?id=</code> (GET) or{' '}
+                      <code className="text-white">{`{"id": "..."}`}</code> (POST). Cached 5m; add{' '}
+                      <code className="text-white">&amp;refresh=true</code> for live scrape.
                     </p>
                     <p>
-                      • Cached 5m for speed (7d if delivered). Add{' '}
-                      <code className="text-white">&amp;refresh=true</code> for a live check.
-                    </p>
-                    <p>
-                      • Returns <code className="text-white">statusCategory</code>,{' '}
+                      <span className="text-white/90 font-bold uppercase">Fields:</span>{' '}
+                      <code className="text-white">statusCategory</code>,{' '}
                       <code className="text-white">latestEvent</code>,{' '}
-                      <code className="text-white">events[]</code>, and{' '}
+                      <code className="text-white">events[]</code>,{' '}
                       <code className="text-white">handoffStatus</code>.
                     </p>
                   </div>
                 </div>
               );
             })()}
+          </div>
           </div>
         </div>
       </div>
